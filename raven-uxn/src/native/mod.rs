@@ -1,6 +1,6 @@
 use crate::{Device, Uxn};
 
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 compile_error!("no native implementation for this platform");
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -96,7 +96,7 @@ pub fn entry(vm: &mut Uxn, dev: &mut dyn Device, pc: u16) -> u16 {
 
     // SAFETY: do you trust me?
     unsafe {
-        aarch64_entry(
+        native_entry(
             vm.stack.data.as_mut_ptr(),
             &mut vm.stack.index as *mut _,
             vm.ret.data.as_mut_ptr(),
@@ -109,10 +109,15 @@ pub fn entry(vm: &mut Uxn, dev: &mut dyn Device, pc: u16) -> u16 {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(include_str!("aarch64.s"));
+
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(include_str!("x86_64.s"));
+
 extern "C" {
     #[allow(improper_ctypes)]
-    fn aarch64_entry(
+    fn native_entry(
         stack: *mut u8,
         stack_index: *mut u8,
         ret: *mut u8,

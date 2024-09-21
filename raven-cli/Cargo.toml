@@ -19,4 +19,4 @@ varvara = { path = "../raven-varvara", package = "raven-varvara" }
 uxn = { path = "../raven-uxn", package = "raven-uxn", features = ["native"] }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-uxn = { path = "../raven-uxn", package = "raven-uxn" }
+uxn = { path = "../raven-uxn", package = "raven-uxn", features = ["native"] }
