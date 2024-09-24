@@ -9,16 +9,26 @@
 # r12 - Jump table pointer (loaded in native_entry)
 # r13-15, rbx, rax - scratch registers
 .macro next
+    # load instruction from program counter
     movzx rax, byte ptr [r8 + r9]
-    inc r9 
-    and r9, 0xffff
+    # increment program counter
+    inc r9w 
+    # jump to instruction handler from the jump table
     mov rbx, [r12 + rax * 8]
     jmp rbx
+.endm
+
+.macro pushd, reg
+    inc sil
+    mov byte ptr [rdi + rsi], \reg
 .endm
 
 .global native_entry
 native_entry:
     # TODO adjust rbp so that, gdb is able to show correct stack frame
+
+    # clear higher order bits of stack index as it is u8
+    and rsi, 0xff
     # Load additional arguments from stack
     mov r10, [rsp + 8]
     mov r11, [rsp + 16]
@@ -30,6 +40,7 @@ native_entry:
     push r15
     push rbx
 
+    Load address of JUMP_TABLE
     lea r12, [rip + JUMP_TABLE]
 
     # Jump into the instruction list
@@ -528,6 +539,14 @@ _SFTk:
     next
 
 _LIT2:
+    # higher byte
+    movzx rax, byte ptr [r8 + r9]
+    inc r9w
+    pushd al
+    # lower byte
+    movzx rax, byte ptr [r8 + r9]
+    inc r9w
+    pushd al
     next
 
 _INC2k:
