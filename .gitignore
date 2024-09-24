@@ -2,3 +2,4 @@
 /*.s
 raven-gui/dist
 .vscode
+.idea
