@@ -40,7 +40,7 @@ native_entry:
     push r15
     push rbx
 
-    Load address of JUMP_TABLE
+    # Load address of JUMP_TABLE
     lea r12, [rip + JUMP_TABLE]
 
     # Jump into the instruction list
