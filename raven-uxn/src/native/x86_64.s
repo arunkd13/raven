@@ -1,7 +1,7 @@
 # rdi - stack pointer (&mut [u8; 256])
 # rsi - stack index (u8)
-# rdx - nexturn stack pointer (&mut [u8; 256])
-# rcx - nexturn stack index (u8)
+# rdx - return stack pointer (&mut [u8; 256])
+# rcx - return stack index (u8)
 # r8 - RAM pointer (&mut [u8; 65536])
 # r9 - program counter (u16), offset of the next value in RAM
 # r10 - VM pointer (&mut Uxn) (loaded from stack in native_entry)
@@ -9,18 +9,58 @@
 # r12 - Jump table pointer (loaded in native_entry)
 # r13-15, rbx, rax - scratch registers
 .macro next
-    # load instruction from program counter
+    # load instruction from program counter and increment
     movzx rax, byte ptr [r8 + r9]
-    # increment program counter
     inc r9w 
-    # jump to instruction handler from the jump table
+    # jump to corresponding instruction handler from the jump table
     mov rbx, [r12 + rax * 8]
     jmp rbx
+.endm
+
+.macro unimplemented
+    int3
+    next
 .endm
 
 .macro pushd, reg
     inc sil
     mov byte ptr [rdi + rsi], \reg
+.endm
+
+.macro precall
+    # We have to write our stack index pointers back into the &mut Uxn
+    mov rbx, [rsp]          # read ret index pointer
+    mov rax, [rsp + 8]      # read stack index pointer
+    mov byte ptr [rax], sil # save stack index
+    mov byte ptr [rbx], cl  # save ret index
+
+    # Save rest of the register states that we need
+    push rdi
+    push rdx
+    push r8
+    push r9
+
+    # Setup the arguments to be passed
+    mov rdi, r10 # VM pointer (&mut Uxn)
+    mov rsi, r11 # Device handle pointer
+.endm
+
+.macro postcall
+    # Restore the register states
+    pop r9
+    pop r8
+    pop rdx
+    pop rdi
+
+    # The DEO operation may have changed stack pointers, so reload them here
+    mov rbx, [rsp]
+    mov rax, [rsp + 8]
+    movzx rsi, byte ptr [rax]
+    movzx rcx, byte ptr [rbx]
+
+    # Load the additional arguments from stack
+    mov r10, [rbp + 16]
+    mov r11, [rbp + 24]
 .endm
 
 .global native_entry
@@ -30,8 +70,8 @@ native_entry:
     mov rbp, rsp
 
     # Load additional arguments from stack
-    mov r10, [rsp + 8]
-    mov r11, [rsp + 16]
+    mov r10, [rbp + 16]
+    mov r11, [rbp + 24]
 
     # Save registers that need to be restored when returning
     push r12
@@ -43,14 +83,22 @@ native_entry:
     # Load address of JUMP_TABLE
     lea r12, [rip + JUMP_TABLE]
 
-    # Load the index values for the data and return stacks, from the respective pointer arguments
-    movzx rsi, byte ptr [rsi]
-    movzx rcx, byte ptr [rcx]
+    # Convert from index pointers to index values in rsi / rcx
+    push rsi # save stack index pointer
+    push rcx # save ret index pointer
+    movzx rsi, byte ptr [rsi] # load stack index
+    movzx rcx, byte ptr [rcx] # load ret index
 
     # Jump into the instruction list
     next
 
 _BRK:
+    # Write index values back through index pointers
+    pop rbx                 # read ret index pointer
+    pop rax                 # read stack index pointer
+    mov byte ptr [rax], sil # save stack index
+    mov byte ptr [rbx], cl  # save ret index
+
     # Restore registers that were saved in stack
     pop rbx
     pop r15
@@ -58,394 +106,404 @@ _BRK:
     pop r13
     pop r12
 
-    # return PC from function
-    mov rax, r9 
+    pop rbp # Restore frame pointer
 
-    # Restore frame pointer
-    pop rbp
-
+    mov rax, r9 # return PC from function
     ret
 
 _INC:
-    next
+    unimplemented
 
 _POP:
-    next
+    unimplemented
 
 _NIP:
-    next
+    unimplemented
 
 _SWP:
-    next
+    unimplemented
 
 _ROT:
-    next
+    unimplemented
 
 _DUP:
-    next
+    unimplemented
 
 _OVR:
-    next
+    unimplemented
 
 _EQU:
-    next
+    unimplemented
 
 _NEQ:
-    next
+    unimplemented
 
 _GTH:
-    next
+    unimplemented
 
 _LTH:
-    next
+    unimplemented
 
 _JMP:
-    next
+    unimplemented
 
 _JCN:
-    next
+    unimplemented
 
 _JSR:
-    next
+    unimplemented
 
 _STH:
-    next
+    unimplemented
 
 _LDZ:
-    next
+    unimplemented
 
 _STZ:
-    next
+    unimplemented
 
 _LDR:
-    next
+    unimplemented
 
 _STR:
-    next
+    unimplemented
 
 _LDA:
-    next
+    unimplemented
 
 _STA:
-    next
+    unimplemented
 
 _DEI:
-    next
+    unimplemented
 
 _DEO:
-    next
+    unimplemented
 
 _ADD:
-    next
+    unimplemented
 
 _SUB:
-    next
+    unimplemented
 
 _MUL:
-    next
+    unimplemented
 
 _DIV:
-    next
+    unimplemented
 
 _AND:
-    next
+    unimplemented
 
 _ORA:
-    next
+    unimplemented
 
 _EOR:
-    next
+    unimplemented
 
 _SFT:
-    next
+    unimplemented
 
 _JCI:
-    next
+    unimplemented
 
 _INC2:
-    next
+    unimplemented
 
 _POP2:
-    next
+    unimplemented
 
 _NIP2:
-    next
+    unimplemented
 
 _SWP2:
-    next
+    unimplemented
 
 _ROT2:
-    next
+    unimplemented
 
 _DUP2:
-    next
+    unimplemented
 
 _OVR2:
-    next
+    unimplemented
 
 _EQU2:
-    next
+    unimplemented
 
 _NEQ2:
-    next
+    unimplemented
 
 _GTH2:
-    next
+    unimplemented
 
 _LTH2:
-    next
+    unimplemented
 
 _JMP2:
-    next
+    unimplemented
 
 _JCN2:
-    next
+    unimplemented
 
 _JSR2:
-    next
+    unimplemented
 
 _STH2:
-    next
+    unimplemented
 
 _LDZ2:
-    next
+    unimplemented
 
 _STZ2:
-    next
+    unimplemented
 
 _LDR2:
-    next
+    unimplemented
 
 _STR2:
-    next
+    unimplemented
 
 _LDA2:
-    next
+    unimplemented
 
 _STA2:
-    next
+    unimplemented
 
 _DEI2:
-    next
+    unimplemented
 
 _DEO2:
+    precall
+    call deo_2_entry # todo check return value for early exit?
+    postcall
     next
 
 _ADD2:
-    next
+    unimplemented
 
 _SUB2:
-    next
+    unimplemented
 
 _MUL2:
-    next
+    unimplemented
 
 _DIV2:
-    next
+    unimplemented
 
 _AND2:
-    next
+    unimplemented
 
 _ORA2:
-    next
+    unimplemented
 
 _EOR2:
-    next
+    unimplemented
 
 _SFT2:
-    next
+    unimplemented
 
 _JMI:
+    # read the jump offset from code
+    mov al, byte ptr [r8 + r9]
+    inc r9w
+    shl ax
+    mov al, byte ptr [r8 + r9]
+    inc r9w
+
+    # move the program counter by the offset
+    add r9w, ax
+
     next
 
 _INCr:
-    next
+    unimplemented
 
 _POPr:
-    next
+    unimplemented
 
 _NIPr:
-    next
+    unimplemented
 
 _SWPr:
-    next
+    unimplemented
 
 _ROTr:
-    next
+    unimplemented
 
 _DUPr:
-    next
+    unimplemented
 
 _OVRr:
-    next
+    unimplemented
 
 _EQUr:
-    next
+    unimplemented
 
 _NEQr:
-    next
+    unimplemented
 
 _GTHr:
-    next
+    unimplemented
 
 _LTHr:
-    next
+    unimplemented
 
 _JMPr:
-    next
+    unimplemented
 
 _JCNr:
-    next
+    unimplemented
 
 _JSRr:
-    next
+    unimplemented
 
 _STHr:
-    next
+    unimplemented
 
 _LDZr:
-    next
+    unimplemented
 
 _STZr:
-    next
+    unimplemented
 
 _LDRr:
-    next
+    unimplemented
 
 _STRr:
-    next
+    unimplemented
 
 _LDAr:
-    next
+    unimplemented
 
 _STAr:
-    next
+    unimplemented
 
 _DEIr:
-    next
+    unimplemented
 
 _DEOr:
-    next
+    unimplemented
 
 _ADDr:
-    next
+    unimplemented
 
 _SUBr:
-    next
+    unimplemented
 
 _MULr:
-    next
+    unimplemented
 
 _DIVr:
-    next
+    unimplemented
 
 _ANDr:
-    next
+    unimplemented
 
 _ORAr:
-    next
+    unimplemented
 
 _EORr:
-    next
+    unimplemented
 
 _SFTr:
-    next
+    unimplemented
 
 _JSI:
-    next
+    unimplemented
 
 _INC2r:
-    next
+    unimplemented
 
 _POP2r:
-    next
+    unimplemented
 
 _NIP2r:
-    next
+    unimplemented
 
 _SWP2r:
-    next
+    unimplemented
 
 _ROT2r:
-    next
+    unimplemented
 
 _DUP2r:
-    next
+    unimplemented
 
 _OVR2r:
-    next
+    unimplemented
 
 _EQU2r:
-    next
+    unimplemented
 
 _NEQ2r:
-    next
+    unimplemented
 
 _GTH2r:
-    next
+    unimplemented
 
 _LTH2r:
-    next
+    unimplemented
 
 _JMP2r:
-    next
+    unimplemented
 
 _JCN2r:
-    next
+    unimplemented
 
 _JSR2r:
-    next
+    unimplemented
 
 _STH2r:
-    next
+    unimplemented
 
 _LDZ2r:
-    next
+    unimplemented
 
 _STZ2r:
-    next
+    unimplemented
 
 _LDR2r:
-    next
+    unimplemented
 
 _STR2r:
-    next
+    unimplemented
 
 _LDA2r:
-    next
+    unimplemented
 
 _STA2r:
-    next
+    unimplemented
 
 _DEI2r:
-    next
+    unimplemented
 
 _DEO2r:
-    next
+    unimplemented
 
 _ADD2r:
-    next
+    unimplemented
 
 _SUB2r:
-    next
+    unimplemented
 
 _MUL2r:
-    next
+    unimplemented
 
 _DIV2r:
-    next
+    unimplemented
 
 _AND2r:
-    next
+    unimplemented
 
 _ORA2r:
-    next
+    unimplemented
 
 _EOR2r:
-    next
+    unimplemented
 
 _SFT2r:
-    next
+    unimplemented
 
 _LIT:
     movzx rax, byte ptr [r8 + r9]
@@ -454,101 +512,101 @@ _LIT:
     next
 
 _INCk:
-    next
+    unimplemented
 
 _POPk:
-    next
+    unimplemented
 
 _NIPk:
-    next
+    unimplemented
 
 _SWPk:
-    next
+    unimplemented
 
 _ROTk:
-    next
+    unimplemented
 
 _DUPk:
-    next
+    unimplemented
 
 _OVRk:
-    next
+    unimplemented
 
 _EQUk:
-    next
+    unimplemented
 
 _NEQk:
-    next
+    unimplemented
 
 _GTHk:
-    next
+    unimplemented
 
 _LTHk:
-    next
+    unimplemented
 
 _JMPk:
-    next
+    unimplemented
 
 _JCNk:
-    next
+    unimplemented
 
 _JSRk:
-    next
+    unimplemented
 
 _STHk:
-    next
+    unimplemented
 
 _LDZk:
-    next
+    unimplemented
 
 _STZk:
-    next
+    unimplemented
 
 _LDRk:
-    next
+    unimplemented
 
 _STRk:
-    next
+    unimplemented
 
 _LDAk:
-    next
+    unimplemented
 
 _STAk:
-    next
+    unimplemented
 
 _DEIk:
-    next
+    unimplemented
 
 _DEOk:
-    next
+    unimplemented
 
 .macro binary_opk op
-    next
+    unimplemented
 .endm
 
 _ADDk:
-    next
+    unimplemented
 
 _SUBk:
-    next
+    unimplemented
 
 _MULk:
-    next
+    unimplemented
 
 _DIVk:
-    next
+    unimplemented
 
 _ANDk:
-    next
+    unimplemented
 
 _ORAk:
-    next
+    unimplemented
 
 _EORk:
-    next
+    unimplemented
 
 _SFTk:
-    next
+    unimplemented
 
 _LIT2:
     # higher byte
@@ -562,293 +620,293 @@ _LIT2:
     next
 
 _INC2k:
-    next
+    unimplemented
 
 _POP2k:
-    next
+    unimplemented
 
 _NIP2k:
-    next
+    unimplemented
 
 _SWP2k:
-    next
+    unimplemented
 
 _ROT2k:
-    next
+    unimplemented
 
 _DUP2k:
-    next
+    unimplemented
 
 _OVR2k:
-    next
+    unimplemented
 
 _EQU2k:
-    next
+    unimplemented
 
 _NEQ2k:
-    next
+    unimplemented
 
 _GTH2k:
-    next
+    unimplemented
 
 _LTH2k:
-    next
+    unimplemented
 
 _JMP2k:
-    next
+    unimplemented
 
 _JCN2k:
-    next
+    unimplemented
 
 _JSR2k:
-    next
+    unimplemented
 
 _STH2k:
-    next
+    unimplemented
 
 _LDZ2k:
-    next
+    unimplemented
 
 _STZ2k:
-    next
+    unimplemented
 
 _LDR2k:
-    next
+    unimplemented
 
 _STR2k:
-    next
+    unimplemented
 
 _LDA2k:
-    next
+    unimplemented
 
 _STA2k:
-    next
+    unimplemented
 
 _DEI2k:
-    next
+    unimplemented
 
 _DEO2k:
-    next
+    unimplemented
 
 _ADD2k:
-    next
+    unimplemented
 
 _SUB2k:
-    next
+    unimplemented
 
 _MUL2k:
-    next
+    unimplemented
 
 _DIV2k:
-    next
+    unimplemented
 
 _AND2k:
-    next
+    unimplemented
 
 _ORA2k:
-    next
+    unimplemented
 
 _EOR2k:
-    next
+    unimplemented
 
 _SFT2k:
-    next
+    unimplemented
 
 _LITr:
-    next
+    unimplemented
 
 _INCkr:
-    next
+    unimplemented
 
 _POPkr:
-    next
+    unimplemented
 
 _NIPkr:
-    next
+    unimplemented
 
 _SWPkr:
-    next
+    unimplemented
 
 _ROTkr:
-    next
+    unimplemented
 
 _DUPkr:
-    next
+    unimplemented
 
 _OVRkr:
-    next
+    unimplemented
 
 _EQUkr:
-    next
+    unimplemented
 
 _NEQkr:
-    next
+    unimplemented
 
 _GTHkr:
-    next
+    unimplemented
 
 _LTHkr:
-    next
+    unimplemented
 
 _JMPkr:
-    next
+    unimplemented
 
 _JCNkr:
-    next
+    unimplemented
 
 _JSRkr:
-    next
+    unimplemented
 
 _STHkr:
-    next
+    unimplemented
 
 _LDZkr:
-    next
+    unimplemented
 
 _STZkr:
-    next
+    unimplemented
 
 _LDRkr:
-    next
+    unimplemented
 
 _STRkr:
-    next
+    unimplemented
 
 _LDAkr:
-    next
+    unimplemented
 
 _STAkr:
-    next
+    unimplemented
 
 _DEIkr:
-    next
+    unimplemented
 
 _DEOkr:
-    next
+    unimplemented
 
 .macro binary_opkr op
-    next
+    unimplemented
 .endm
 
 _ADDkr:
-    next
+    unimplemented
 
 _SUBkr:
-    next
+    unimplemented
 
 _MULkr:
-    next
+    unimplemented
 
 _DIVkr:
-    next
+    unimplemented
 
 _ANDkr:
-    next
+    unimplemented
 
 _ORAkr:
-    next
+    unimplemented
 
 _EORkr:
-    next
+    unimplemented
 
 _SFTkr:
-    next
+    unimplemented
 
 _LIT2r:
-    next
+    unimplemented
 
 _INC2kr:
-    next
+    unimplemented
 
 _POP2kr:
-    next
+    unimplemented
 
 _NIP2kr:
-    next
+    unimplemented
 
 _SWP2kr:
-    next
+    unimplemented
 
 _ROT2kr:
-    next
+    unimplemented
 
 _DUP2kr:
-    next
+    unimplemented
 
 _OVR2kr:
-    next
+    unimplemented
 
 _EQU2kr:
-    next
+    unimplemented
 
 _NEQ2kr:
-    next
+    unimplemented
 
 _GTH2kr:
-    next
+    unimplemented
 
 _LTH2kr:
-    next
+    unimplemented
 
 _JMP2kr:
-    next
+    unimplemented
 
 _JCN2kr:
-    next
+    unimplemented
 
 _JSR2kr:
-    next
+    unimplemented
 
 _STH2kr:
-    next
+    unimplemented
 
 _LDZ2kr:
-    next
+    unimplemented
 
 _STZ2kr:
-    next
+    unimplemented
 
 _LDR2kr:
-    next
+    unimplemented
 
 _STR2kr:
-    next
+    unimplemented
 
 _LDA2kr:
-    next
+    unimplemented
 
 _STA2kr:
-    next
+    unimplemented
 
 _DEI2kr:
-    next
+    unimplemented
 
 _DEO2kr:
-    next
+    unimplemented
 
 _ADD2kr:
-    next
+    unimplemented
 
 _SUB2kr:
-    next
+    unimplemented
 
 _MUL2kr:
-    next
+    unimplemented
 
 _DIV2kr:
-    next
+    unimplemented
 
 _AND2kr:
-    next
+    unimplemented
 
 _ORA2kr:
-    next
+    unimplemented
 
 _EOR2kr:
-    next
+    unimplemented
 
 _SFT2kr:
-    next
+    unimplemented
 
 .data
 .balign 4096
