@@ -25,10 +25,10 @@
 
 .global native_entry
 native_entry:
-    # TODO adjust rbp so that, gdb is able to show correct stack frame
+    # Setup frame pointer for debugging
+    push rbp
+    mov rbp, rsp
 
-    # clear higher order bits of stack index as it is u8
-    and rsi, 0xff
     # Load additional arguments from stack
     mov r10, [rsp + 8]
     mov r11, [rsp + 16]
@@ -43,6 +43,10 @@ native_entry:
     # Load address of JUMP_TABLE
     lea r12, [rip + JUMP_TABLE]
 
+    # Load the index values for the data and return stacks, from the respective pointer arguments
+    movzx rsi, byte ptr [rsi]
+    movzx rcx, byte ptr [rcx]
+
     # Jump into the instruction list
     next
 
@@ -54,7 +58,12 @@ _BRK:
     pop r13
     pop r12
 
-    mov rax, r9 # return PC from function
+    # return PC from function
+    mov rax, r9 
+
+    # Restore frame pointer
+    pop rbp
+
     ret
 
 _INC:
@@ -439,6 +448,9 @@ _SFT2r:
     next
 
 _LIT:
+    movzx rax, byte ptr [r8 + r9]
+    inc r9w
+    pushd al
     next
 
 _INCk:
