@@ -1,4 +1,4 @@
-# TODO Check all instructions starting from _STH
+# TODO Check all instructions starting from _LDR
 
 # rdi - stack pointer (&mut [u8; 256])
 # rsi - stack index (u8)
@@ -670,25 +670,25 @@ _JSR:
     _stash_pc
     next
 
+# a -- | a
 _STH:
-    unimplemented
-
-_LDZ:
-    dpeek_top_zx rax
-    mpeek bl, rax
-    dpoke_top bl
+    dpop al
+    rpush al
     next
 
+# addr8 -- value8
+_LDZ:
+    dpeek_top_zx rax    # read addr8
+    mpeek bl, rax       
+    dpoke_top bl        # write value8
+    next
+
+# val8 addr8 --
 _STZ:
-    # read addr8
-    dpeek_top_zx rax
-    ddrop
+    dpop_zx rax     # read addr8
+    dpop bl         # read val8
 
-    # read val
-    dpeek_top bl
-    ddrop
-
-    mpoke rax, bl
+    mpoke rax, bl   # write val8
 
     next
 
@@ -925,31 +925,31 @@ _JSR2:
     _stash_pc
     next
 
+# a1 a0 -- | a1 a0
 _STH2:
-    unimplemented
+    dpop2 al, bl    # read a0 and a1
+    rpush2 bl, al   # write a1 and a0
+    next
 
+# addr8 -- value8_1 value8_0
 _LDZ2:
-    dpeek_top_zx rax
-    mpeek2 bl, cl, rax, al
-    dpoke_top bl # save on stack index manupulation by poking
-    dpush cl
+    dpeek_top_zx rax        # read addr8
+
+    mpeek bl, rax, al       
+    dpoke_top bl            # write value8_1
+
+    inczx rax, al
+    mpeek bl, rax, al       
+    dpush bl                # write value8_0
 
     next
 
+# val8_1 val8_0 addr8 --
 _STZ2:
-    # read addr8
-    dpeek_top_zx rax
-    ddrop
+    dpop_zx rax             # read addr8
+    dpop2 bl, cl            # read val8_0 and val8_1
 
-    # read lower byte
-    dpeek_top bl
-    ddrop
-
-    # read higher byte
-    dpeek_top cl
-    ddrop
-
-    mpoke2 rax, al, cl, bl
+    mpoke2 rax, al, cl, bl  # write val8_1 and val8_0
 
     next
 
@@ -1178,25 +1178,25 @@ _JSRr:
     _stash_pc
     next
 
+# | a -- a |
 _STHr:
-    unimplemented
-
-_LDZr:
-    rpeek_top_zx rax
-    mpeek bl, rax
-    rpoke_top bl
+    rpop al
+    dpush al
     next
 
+# addr8 -- value8
+_LDZr:
+    rpeek_top_zx rax    # read addr8
+    mpeek bl, rax       
+    rpoke_top bl        # write value8
+    next
+
+# val8 addr8 --
 _STZr:
-    # read addr8
-    rpeek_top_zx rax
-    rdrop
+    rpop_zx rax     # read addr8
+    rpop bl         # read val8
 
-    # read val
-    rpeek_top bl
-    rdrop
-
-    mpoke rax, bl
+    mpoke rax, bl   # write val8
 
     next
 
@@ -1446,40 +1446,31 @@ _JSR2r:
     _stash_pc
     next
 
+# | a1 a0 -- a1 a0 |
 _STH2r:
-    unimplemented
+    rpop2 al, bl    # read a0 and a1
+    dpush2 bl, al   # write a1 and a0
+    next
 
+# addr8 -- value8_1 value8_0
 _LDZ2r:
-    rpeek_top_zx rax
+    rpeek_top_zx rax        # read addr8
 
-    # higher byte
-    mpeek bl, rax
-    rpoke_top bl # save on stack index manupulation by poking
+    mpeek bl, rax, al       
+    rpoke_top bl            # write value8_1
+
     inczx rax, al
-
-    # lower byte
-    mpeek bl, rax
-    rpush bl
+    mpeek bl, rax, al       
+    rpush bl                # write value8_0
 
     next
 
+# val8_1 val8_0 addr --
 _STZ2r:
-    # read addr8
-    rpeek_top_zx rax
-    rdrop
+    rpop_zx rax             # read addr8
+    rpop2 bl, cl            # read val8_0 and val8_1
 
-    # read lower byte
-    rpeek_top bl
-    rdrop
-
-    # read higher byte
-    rpeek_top cl
-    rdrop
-
-    # write to RAM
-    mpoke rax, cl
-    inc ax 
-    mpoke rax, bl
+    mpoke2 rax, al, cl, bl  # write val8_1 and val8_0
 
     next
 
@@ -1702,23 +1693,27 @@ _JSRk:
     _stash_pc
     next
 
+# a -- a | a
 _STHk:
-    unimplemented
-
-_LDZk:
-    dpeek_top_zx rax
-    mpeek bl, rax
-    dpush bl
+    dpeek_top al    # read a
+    rpush al        # write a
     next
 
+# addr8 -- addr8 value8
+_LDZk:
+    dpeek_top_zx rax    # read addr8
+    mpeek bl, rax       
+    dpush bl            # write value8
+    next
+
+# val8 addr8 -- val8 addr8
 _STZk:
-    # read addr8
-    dpeek_top_zx rax
+    dpeek_top_zx rax    # read addr8
 
-    # read val
-    dpeek bl, 1, rcx, cl
+    dindex rcx, cl, 1
+    dpeek bl, rcx, cl   # read val8
 
-    mpoke rax, bl
+    mpoke rax, bl       # write val8
 
     next
 
@@ -1952,37 +1947,37 @@ _JSR2k:
     _stash_pc
     next
 
+# a1 a0 -- a1 a0 | a1 a0
 _STH2k:
-    unimplemented
+    dpeek2 al, bl, rcx, cl  # read a0 and a1
+    rpush2 bl, al           # write a1 and a0
+    next
 
+# addr8 -- addr8 value8_1 value8_0
 _LDZ2k:
-    dpeek_top_zx rax
+    dpeek_top_zx rax    # read addr8
 
-    # higher byte
     mpeek bl, rax
-    dpush bl
+    dpush bl            # write value8_1
+
     inczx rax, al
-
-    # lower byte
     mpeek bl, rax
-    dpush bl
+    dpush bl            # write value8_0
 
     next
 
+# val8_1 val8_0 addr8 -- val8_1 val8_0 addr8
 _STZ2k:
-    # read addr8
-    dpeek_top_zx rax
+    dpeek_top_zx rax            # read addr8
 
-    # read lower byte
-    dpeek bl, 1, r13, r13d
+    dindex rcx, cl, 2
+    dpeek bl, rcx, cl           # read val8_1
+    mpoke rax, bl               # write val8_1
 
-    # read higher byte
-    dpeek cl, 2, r13, r13d
-
-    # write to RAM
-    mpoke rax, cl # higher byte
-    inc ax 
-    mpoke rax, bl # lower byte
+    inczx rax, al
+    inczx rcx, cl
+    dpeek bl, rcx, cl           # read val8_0
+    mpoke rax bl                # write val8_0
 
     next
 
@@ -2200,23 +2195,27 @@ _JSRkr:
     _stash_pc
     next
 
+# | a -- a | a
 _STHkr:
-    unimplemented
-
-_LDZkr:
-    rpeek_top_zx rax
-    mpeek bl, rax
-    rpush bl
+    rpeek_top al    # read a
+    dpush al        # write a
     next
 
+# addr8 -- addr8 value8
+_LDZkr:
+    rpeek_top_zx rax    # read addr8
+    mpeek bl, rax
+    rpush bl            # write value8
+    next
+
+# val8 addr8 -- val8 addr8
 _STZkr:
-    # read addr8
-    rpeek_top_zx rax
+    rpeek_top_zx rax    # read addr8
 
-    # read val
-    rpeek bl, rcx, cl, 1
+    rindex rcx, cl, 1
+    rpeek bl, rcx, cl   # read val8
 
-    mpoke rax, bl
+    mpoke rax, bl       # write val8
 
     next
 
@@ -2452,38 +2451,37 @@ _JSR2kr:
     _stash_pc
     next
 
+# | a1 a0 -- a1 a0 | a1 a0
 _STH2kr:
-    unimplemented
+    rpeek2 al, bl, rcx, cl  # read a0 and a1
+    dpush2 bl, al           # write a1 and a0
+    next
 
+# addr8 -- addr8 value8_1 value8_0
 _LDZ2kr:
-    # read addr8
-    rpeek_top_zx rax
+    rpeek_top_zx rax    # read addr8
 
-    # higher byte
     mpeek bl, rax
-    rpush bl
+    rpush bl            # write value8_1
+
     inczx rax, al
-
-    # lower byte
     mpeek bl, rax
-    rpush bl
+    rpush bl            # write value8_0
 
     next
 
+# val8_1 val8_0 addr8 -- val8_1 val8_0 addr8
 _STZ2kr:
-    # read addr8
-    rpeek_top_zx rax
+    dpeek_top_zx rax            # read addr8
 
-    # read lower byte
-    rpeek bl, r13, r13d, 1
+    dindex rcx, cl, 2
+    dpeek bl, rcx, cl           # read val8_1
+    mpoke rax, bl               # write val8_1
 
-    # read higher byte
-    rpeek cl, r13, r13d, 2
-
-    # write to RAM
-    mpoke rax, cl
-    inc ax 
-    mpoke rax, bl
+    inczx rax, al
+    inczx rcx, cl
+    dpeek bl, rcx, cl           # read val8_0
+    mpoke rax bl                # write val8_0
 
     next
 
