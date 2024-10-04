@@ -1,4 +1,4 @@
-# TODO Check all instructions starting from _LDR
+# TODO Check all instructions starting from _SFT
 
 # rdi - stack pointer (&mut [u8; 256])
 # rsi - stack index (u8)
@@ -83,6 +83,13 @@
     mpoke \x, \i2b
 .endm
 
+# Read current program counter into o, offsetted by ib bytes.
+.macro nindex, o, ow, ib
+    movsx \ow, ib
+    add \ow, r9w
+    movzx \o, \ow
+.endm
+
 # Copy current program counter to register reg
 #.macro nindex, reg 
 #    mov \reg, r9
@@ -125,15 +132,6 @@
     inczx \x, \xw
     mpoke \x, \i2b
 .endm
-
-#.macro npokes x, xw, iw
-#    add \xw, r9w
-#    movzx \x, \xw
-#    mov byte ptr [r8 + \x], b
-#    inc \xw
-#    movzx \x, \xw
-#    mov byte ptr [r8 + \x], b
-#.endm
 
 .macro next
     nread_zx rax
@@ -194,6 +192,9 @@
 # of the higher byte.
 #
 # After execution, r contains the value of the higher byte.
+#
+# NOTE: We do not read a word directly and use xchg to swap endianness, as we
+# may not always have the short to be word aligned.
 .macro dpeeks, o, x, xb, r
     dpeek_zx \o, \x
     deczx \x, \xb
@@ -226,12 +227,12 @@
     dpeek \o2b, \r
 .endm
 
-# Read a short from top of data stack onto ow.
+# Read a short from top of data stack onto o.
 #
 # After execution r2w contains the higher byte and r1 contains its index.
-.macro dpeeks_top, ow, r1, r1b, r2w
+.macro dpeeks_top, o, r1, r1b, r2w
     movzx \r1, sil
-    dpeeks \ow, \r1, \r1b, \r2w
+    dpeeks \o, \r1, \r1b, \r2w
 .endm
 
 # Pop top byte from the data stack onto ob.
@@ -444,9 +445,10 @@
 .endm
 
 # Pushes the higher byte of iw and then the lower byte of iw onto return stack.
-.macro rpushs, iw, rw, rh, rl
-    mov \rw, \iw
-    rpush2 \rh, \rl
+.macro rpushs, iw, il
+    rpush \il
+    shr \iw, 8
+    dpush \il
 .endm
 
 .macro precall
@@ -692,54 +694,89 @@ _STZ:
 
     next
 
+# addr8 -- value8
 _LDR:
-    unimplemented
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
+    mpeek al, rbx
+    dpoke_top al        # write value8
+    next
 
+# val8 addr8 --
 _STR:
-    # read addr8, sign extending to short
-    dpeek_top_sx rax
-    ddrop
-    
-    # read val
-    dpeek_top bl
-    ddrop
-
-    npoke rax, ax, bl
+    dpop al             # read addr8
+    nindex rbx, bx, al
+    dpop al             # read val8
+    mpoke rbx, al       # write val8
 
     next
 
+# addr8_1 addr8_0 -- val8
 _LDA:
-    unimplemented
+    dpops rbx, rax      # read addr8_0 and addr8_1
+    mpeek al, rbx
+    dpush al            # write val8
+    next
 
+# val8 addr8_1 addr8_0 --
 _STA:
-    unimplemented
+    dpops rbx, rax  # read addr8_0 and addr8_1
+    dpop al         # read val8
+    mpoke rbx, al   # write val8
+    next
 
+# device8 -- value8
 _DEI:
-    unimplemented
+    precall
+    call dei_entry
+    postcall
+    next
 
+# value8 device8 --
 _DEO:
-    unimplemented
+    precall
+    call deo_entry
+    postcall
+    next
 
+# a8 b8 -- result8
+.macro binary_op, op
+    dpop bl         # read b8
+    dpeek_top al    # read b8 and a8
+    \op al, bl 
+    dpoke_top al    # write result8
+.endm
+
+# a8 b8 -- a8+b8
 _ADD:
-    unimplemented
+    binary_op add
+    next
 
+# a8 b8 -- a8-b8
 _SUB:
-    unimplemented
+    binary_op sub
+    next
 
+# a8 b8 -- a8*b8
 _MUL:
-    unimplemented
+    binary_op mul
+    next
 
+# a8 b8 -- a8/b8
 _DIV:
-    unimplemented
+    binary_op div
+    next
 
+# a8 b8 -- a&b
 _AND:
-    unimplemented
+    binary_op and
+    next
 
 _ORA:
-    unimplemented
+    binary_op or
 
 _EOR:
-    unimplemented
+    binary_op xor
 
 _SFT:
     # read shift8
@@ -953,62 +990,97 @@ _STZ2:
 
     next
 
+# addr8 -- value8_1 value8_0
 _LDR2:
-    unimplemented
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
 
+    mpeek al, rbx
+    dpoke_top al        # write value8_1
+
+    inczx rbx, bl
+    mpeek al, rbx
+    dpush al            # write value8_0
+    next
+
+# val8_1 val8_0 addr8 --
 _STR2:
-    # read addr8, sign extending to short
-    dpeek_top_sx ax
-    ddrop
-    
-    # read val
-    dpeek_top bl # lower byte
-    ddrop
-    dpeek_top cl # higher byte
-    ddrop
-
-    npoke2 rax, ax, cl, bl
+    dpop al                 # read addr8
+    nindex rcx, cx, al
+    dpop2 al, bl            # read val8_0 and val8_1
+    mpoke2 rcx, cx, bl, al  # write val8_1 and val8_0
 
     next
 
+# addr8_1 addr8_0 -- val8_1 val8_0
 _LDA2:
-    unimplemented
+    dpops rcx, rax      # read addr8_0 and addr8_1
+    mpeek2 al, bl, rcx
+    dpush2 al, bl       # write val8_1 and val8_0
+    next
 
+# val8_1 val8_0 addr8_1 addr8_0 --
 _STA2:
-    unimplemented
+    dpops rcx, rax      # read addr8_0 and addr8_1
+    dpop2 al, bl        # read val8
+    mpoke2 rcx, bl, al  # write val8
+    next
 
+# device8 -- value8_1 value8_0
 _DEI2:
     precall
     call dei_2_entry
     postcall
     next
 
+# value8_1 value8_0 device8 --
 _DEO2:
     precall
     call deo_2_entry # todo check return value for early exit?
     postcall
     next
 
+# a8_1 a8_0 b8_1 b8_0 -- result8_1 result8_0
+.macro binary_op2, op
+    dpops bx, cx    # read b8_0 and b8_1
+    dpops ax, cl    # read a8_0 and a8_1
+    \op ax, bx 
+    dpushs ax, al   # write result8_1 and result8_0
+.endm
+
+# a8_1 a8_0 b8_1 b8_0 -- sum8_1 sum8_0
 _ADD2:
-    unimplemented
+    binary_op2 add
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- diff8_1 diff8_0
 _SUB2:
-    unimplemented
+    binary_op2 sub
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- prod8_1 prod8_0
 _MUL2:
-    unimplemented
+    binary_op2 mul 
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- quot8_1 quot8_0
 _DIV2:
-    unimplemented
+    binary_op2 div
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- and8_1 and8_0
 _AND2:
-    unimplemented
+    binary_op2 and
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- or8_1 or8_0
 _ORA2:
-    unimplemented
+    binary_op2 or
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- xor8_1 xor8_0
 _EOR2:
-    unimplemented
+    binary_op2 xor
 
 _SFT2:
     # read shift8
@@ -1200,58 +1272,93 @@ _STZr:
 
     next
 
+# addr8 -- value8
 _LDRr:
-    unimplemented
-
-_STRr:
-    # read addr8, sign extending to short
-    rpeek_top_sx ax
-    rdrop
-    
-    # read val
-    rpeek_top bl
-    rdrop
-
-    # calculate index into RAM from offset from PC
-    nindex rcx
-    add cx, ax
-
-    # write val
-    mpoke rcx, bl
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
+    mpeek al, rbx
+    rpoke_top al        # write value8
     next
 
+# val8 addr8 --
+_STRr:
+    rpop al             # read addr8
+    nindex rbx, bx, al
+    rpop al             # read val8
+    mpoke rbx, al       # write val8
+
+    next
+
+# addr8_1 addr8_0 -- val8
 _LDAr:
-    unimplemented
+    rpops rbx, rax      # read addr8_0 and addr8_1
+    mpeek al, rbx
+    rpush al            # write val8
+    next
 
+# val8 addr8_1 addr8_0 --
 _STAr:
-    unimplemented
+    rpops rbx, rax  # read addr8_0 and addr8_1
+    rpop al         # read val8
+    mpoke rbx, al   # write val8
+    next
 
+# device8 -- value8
 _DEIr:
-    unimplemented
+    precall
+    call dei_r_entry
+    postcall
+    next
 
+# value8 device8 --
 _DEOr:
-    unimplemented
+    precall
+    call deo_r_entry
+    postcall
+    next
 
+# a8 b8 -- a8+b8
+.macro binary_opr, op 
+    rpop bl         # read b8
+    rpeek_top al    # read b8 and a8
+    \op al, bl 
+    rpoke_top al    # write a8+b8
+.endm
+
+# a8 b8 -- a8+b8
 _ADDr:
-    unimplemented
+    binary_opr add
+    next
 
+# a8 b8 -- a8-b8
 _SUBr:
-    unimplemented
+    binary_opr sub
+    next
 
+# a8 b8 -- a8*b8
 _MULr:
-    unimplemented
+    binary_opr mul
+    next
 
+# a8 b8 -- a8/b8
 _DIVr:
-    unimplemented
+    binary_opr div
+    next
 
+# a8 b8 -- a8&b8
 _ANDr:
-    unimplemented
+    binary_opr and
+    next
 
+# a8 b8 -- a8|b8
 _ORAr:
-    unimplemented
+    binary_opr or
+    next
 
+# a8 b8 -- a^b
 _EORr:
-    unimplemented
+    binary_opr xor
+    next
 
 _SFTr:
     # read shift8
@@ -1474,63 +1581,98 @@ _STZ2r:
 
     next
 
+# addr8 -- value8_1 value8_0
 _LDR2r:
-    unimplemented
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
 
+    mpeek al, rbx
+    rpoke_top al        # write value8_1
+
+    inczx rbx, bl
+    mpeek al, rbx
+    rpush al            # write value8_0
+    next
+
+# val8_1 val8_0 addr8
 _STR2r:
-    # read addr8, sign extending to short
-    rpeek_top_sx ax
-    rdrop
-    
-    # read val
-    rpeek_top bl # lower byte
-    rdrop
-    rpeek_top cl # higher byte
-    rdrop
-
-    # calculate index into RAM from offset from PC
-    nindex r13
-    add r13w, ax
-
-    # write val
-    mpoke rcx, cl # higher byte
-    inc cx
-    mpoke rcx, bl # lower byte
+    dpop al                 # read addr8
+    nindex rcx, cx, al
+    dpop2 al, bl            # read val8_0 and val8_1
+    mpoke2 rcx, cx, bl, al  # write val8_1 and val8_0
 
     next
 
+# addr8_1 addr8_0 -- val8_1 val8_0
 _LDA2r:
-    unimplemented
+    rpops rcx, rax      # read addr8_0 and addr8_1
+    mpeek2 al, bl, rcx
+    rpush2 al, bl       # write val8
+    next
 
+# val8_1 val8_0 addr8_1 addr8_0 --
 _STA2r:
-    unimplemented
+    rpops rcx, rax      # read addr8_0 and addr8_1
+    rpop2 al, bl        # read val8
+    mpoke2 rcx, bl, al  # write val8
+    next
 
+# device8 -- value8_1 value8_0
 _DEI2r:
-    unimplemented
+    precall
+    call dei_2r_entry
+    postcall
+    next
 
+# value8_1 value8_0 device8 --
 _DEO2r:
-    unimplemented
+    precall
+    call deo_2r_entry
+    postcall
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- result8_1 result8_0
+.macro binary_op2r, op 
+    rpops bx, cx    # read b8_0 and b8_1
+    rpops ax, cx    # read a8_0 and a8_1
+    \op ax, bx 
+    rpushs ax, al   # write result8_1 and result8_0
+.endm
+
+# a8_1 a8_0 b8_1 b8_0 -- sum8_1 sum8_0
 _ADD2r:
-    unimplemented
+    binary_op2r add
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- diff8_1 diff8_0
 _SUB2r:
-    unimplemented
+    binary_op2r
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- prod8_1 prod8_0
 _MUL2r:
-    unimplemented
+    binary_op2r mul
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- quot8_1 quot8_0
 _DIV2r:
-    unimplemented
+    binary_op2r div
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- and8_1 and8_0
 _AND2r:
-    unimplemented
+    binary_op2r and
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- or8_1 or8_0
 _ORA2r:
-    unimplemented
+    binary_op2r or
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- xor8_1 xor8_0
 _EOR2r:
-    unimplemented
+    binary_op2r xor 
+    next
 
 _SFT2r:
     # read shift8
@@ -1717,60 +1859,99 @@ _STZk:
 
     next
 
+# addr8 -- addr8 value8
 _LDRk:
-    unimplemented
-
-_STRk:
-    # read addr8, sign extending to short
-    dpeek_top_sx ax
-    
-    # read val
-    dpeek bl, 1, r13, r13b
-
-    # calculate index into RAM from offset from PC
-    nindex rcx
-    add cx, ax
-
-    # write val
-    mpoke rcx, bl
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
+    mpeek al, rbx
+    dpush al            # write value8
     next
 
+# val8 addr8 -- val8 addr8
+_STRk:
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
+
+    dindex rcx, cl, 1
+    dpeek al, rcx, cl   # read val8
+    mpoke rbx, al       # write val8
+
+    next
+
+# addr8_1 addr8_0 -- addr8_1 addr8_0 val8
 _LDAk:
-    unimplemented
+    dpeeks_top rbx, rax, al, cx # read addr8_0 and addr8_1
+    mpeek al, rbx
+    dpush al                    # write val8
+    next
 
+# val8 addr8_1 addr8_0 -- val8 addr8_1 addr8_0
 _STAk:
-    unimplemented
+    dpeeks_top rbx, rcx, cl, ax     # read addr8_0 and addr8_1
+    deczx rcx, cl
+    dpeek al, rcx                   # read val8
+    mpoke rbx, al                   # write val8
+    next
 
+# device8 -- device8 value8
 _DEIk:
-    unimplemented
+    precall
+    call dei_k_entry
+    postcall
+    next
 
+# value8 device8 -- value8 device8
 _DEOk:
-    unimplemented
+    precall
+    call deo_k_entry
+    postcall
+    next
 
 .macro binary_opk op
     unimplemented
 .endm
 
+# a8 b8 -- a8 b8 result8
+.macro binary_opk, op 
+    dpeek2_top bl, al, rcx, cl  # read b8 and a8
+    \op al, bl 
+    dpush al                    # write result8
+.endm
+
+# a8 b8 -- a8 b8 a8+b8
 _ADDk:
-    unimplemented
+    binary_opk add
+    next
 
+# a8 b8 -- a8 b8 a8-b8
 _SUBk:
-    unimplemented
+    binary_opk sub
+    next
 
+# a8 b8 --- a8 b8 a8*b8
 _MULk:
-    unimplemented
+    binary_opk mul 
+    next
 
+# a8 b8 -- a8 b8 a8*b8
 _DIVk:
-    unimplemented
+    binary_opk div 
+    next
 
+# a8 b8 -- a8 b8 a8&b8
 _ANDk:
-    unimplemented
+    binary_opk and
+    next
 
+# a8 b8 -- a8 b8 a8|b8
 _ORAk:
-    unimplemented
+    binary_opk or
+    next
 
+# a8 b8 -- a8 b8 a8^b8
 _EORk:
-    unimplemented
+    binary_opk xor
+    next
 
 _SFTk:
     # read shift8
@@ -1981,60 +2162,107 @@ _STZ2k:
 
     next
 
+# addr8 -- addr8 value8_1 value8_0
 _LDR2k:
-    unimplemented
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
 
+    mpeek al, rbx
+    dpush al            # write value8_1
+
+    inczx rbx, bl
+    mpeek al, rbx
+    dpush al            # write value8_0
+    next
+
+# val8_1 val8_0 addr8 -- val8_1 val8_0 addr8
 _STR2k:
-    # read addr8, sign extending to short
-    dpeek_top_sx ax
-    
-    # read val
-    dpeek bl, 1, r13, r13b # lower byte
-    dpeek cl, 2, r13, r13b # higher byte
+    dpeek_top al        # read addr8
+    nindex rbx, bx, al
 
-    # calculate index into RAM from offset from PC
-    nindex r13
-    add r13w, ax
+    dindex rcx, cl, 2
+    dpeek al, rcx, cl   # read val8_1
+    mpoke rbx, al       # write val8_1
 
-    # write val
-    mpoke r13, cl # higher byte
-    inc r13w
-    mpoke r13, bl # lower byte
+    inczx rcx, cl
+    inczx rbx, bx
+    dpeek al, rcx, cl   # read val8_0
+    mpoke rbx, al       # write val8_0
 
     next
 
+# addr8_1 addr8_0 -- addr8_1 addr8_0 val8_1 val8_0
 _LDA2k:
-    unimplemented
+    dpeeks_top rcx, rax, al, r13w   # read addr8_0 and addr8_1
+    mpeek2 al, bl, rcx
+    dpush2 al, bl                   # write val8_1 and val8_0
+    next
 
+# val8_1 val8_0 addr8_1 addr8_0 -- va8_1 val8_0 addr8_1 addr8_0
 _STA2k:
-    unimplemented
+    dpeeks_top rcx, r13, r13b, ax   # read addr8_0 and addr8_1
+    deczx r13, r13b
+    dpeek2 al, bl, r13              # read val8
+    mpoke2 rcx, bl, al              # write val8
+    next
 
+# device8 -- device8 value8_1 value8_0
 _DEI2k:
-    unimplemented
+    precall
+    call dei_2k_entry
+    postcall
+    next
 
+# value8_1 value8_0 device8 -- value8_1 value8_0 device8
 _DEO2k:
-    unimplemented
+    precall
+    call deo_2k_entry
+    postcall
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 result8_1 result8_0
+.macro binary_op2k, op
+    dpeeks_top bx, rcx, cl, r13w    # read b8_0 and b8_1
+    deczx rcx, cl
+    dpeeks ax, rcx, cl, r13w        # read a8_0
+    \op ax, bx 
+    dpushs ax, al                   # write sum8_1 and sum8_0
+.endm
+
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 sum8_1 sum8_0
 _ADD2k:
-    unimplemented
+    binary_op2k add
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 diff8_1 diff8_0
 _SUB2k:
-    unimplemented
+    binary_op2k sub
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
 _MUL2k:
-    unimplemented
+    binary_op2k mul
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 quot8_1 quot8_0
 _DIV2k:
-    unimplemented
+    binary_op2k div
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 and8_1 and8_0
 _AND2k:
-    unimplemented
+    binary_op2k and
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 or8_1 or8_0
 _ORA2k:
-    unimplemented
+    binary_op2k or
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 xor8_1 xor8_0
 _EOR2k:
-    unimplemented
+    binary_op2k xor
+    next
 
 _SFT2k:
     # read shift8
@@ -2219,60 +2447,95 @@ _STZkr:
 
     next
 
+# addr8 -- addr8 value8
 _LDRkr:
-    unimplemented
-
-_STRkr:
-    # read addr8, sign extending to short
-    rpeek_top_sx ax
-    
-    # read val
-    rpeek bl, r13, r13b, 1
-
-    # calculate index into RAM from offset from PC
-    nindex rcx
-    add cx, ax
-
-    # write val
-    mpoke rcx, bl
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
+    mpeek al, rbx
+    rpush al            # write value8
     next
 
+# val8 addr8 -- val8 addr8
+_STRkr:
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
+
+    rindex rcx, cl, 1
+    rpeek al, rcx, cl   # read val8
+    mpoke rbx, al       # write val8
+
+    next
+
+# addr8_1 addr8_0 -- addr8_1 addr8_0 val8
 _LDAkr:
-    unimplemented
+    rpeeks_top rbx, rax, al, cx # read addr8_0 and addr8_1
+    mpeek al, rbx
+    rpush al                    # write val8
+    next
 
+# val8 addr8_1 addr8_0 -- val8 addr8_1 addr8_0
 _STAkr:
-    unimplemented
+    rpeeks_top rbx, rcx, cl, ax     # read addr8_0 and addr8_1
+    deczx rcx, cl
+    rpeek al, rcx                   # read val8
+    mpoke rbx, al                   # write val8
+    next
 
+# device8 -- device8 value8
 _DEIkr:
-    unimplemented
+    precall
+    call dei_kr_entry
+    postcall
+    next
 
+# value8 device8 -- value8 device8
 _DEOkr:
-    unimplemented
+    precall
+    call deo_kr_entry
+    postcall
+    next
 
-.macro binary_opkr op
-    unimplemented
+# a8 b8 -- a8 b8 result8
+.macro binary_opkr, op
+    rpeek2_top bl, al, rcx, cl  # read b8 and a8
+    \op al, bl 
+    rpush al                    # write result8
 .endm
 
+# a8 b8 -- a8 b8 a8+b8
 _ADDkr:
-    unimplemented
+    binary_opkr add
+    next
 
+# a8 b8 -- a8 b8 a8-b8
 _SUBkr:
-    unimplemented
+    binary_opkr sub
+    next
 
+# a8 b8 -- a8 b8 a8*b8
 _MULkr:
-    unimplemented
+    binary_opkr mul
+    next
 
+# a8 b8 -- a8 b8 a8/b8
 _DIVkr:
-    unimplemented
+    binary_opkr div
+    next
 
+# a8 b8 -- a8 b8 a8&b8
 _ANDkr:
-    unimplemented
+    binary_opkr and 
+    next
 
+# a8 b8 -- a8 b8 a8|b8
 _ORAkr:
-    unimplemented
+    binary_opkr or 
+    next
 
+# a8 b8 -- a8 b8 a8^b8
 _EORkr:
-    unimplemented
+    binary_opkr xor 
+    next
 
 _SFTkr:
     # read shift8
@@ -2485,60 +2748,107 @@ _STZ2kr:
 
     next
 
+# addr8 -- addr8 value8_1 value8_0
 _LDR2kr:
-    # read addr8, sign extending to short
-    rpeek_top_sx ax
-    
-    # read val
-    rpeek bl, r13, r13b, 1 # lower byte
-    rpeek cl, r13, r13b, 2 # higher byte
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
 
-    # calculate index into RAM from offset from PC
-    nindex r13
-    add r13w, ax
+    mpeek al, rbx
+    rpush al            # write value8_1
 
-    # write val
-    mpoke r13, cl # higher byte
-    inc r13w
-    mpoke r13, bl # lower byte
+    inczx rbx, bl
+    mpeek al, rbx
+    rpush al            # write value8_0
+    next
+
+# val8_1 val8_0 addr8 -- val8_1 val8_0 addr8
+_STR2kr:
+    rpeek_top al        # read addr8
+    nindex rbx, bx, al
+
+    rindex rcx, cl, 2
+    rpeek al, rcx, cl   # read val8_1
+    mpoke rbx, al       # write val8_1
+
+    inczx rcx, cl
+    inczx rbx, bx
+    rpeek al, rcx, cl   # read val8_0
+    mpoke rbx, al       # write val8_0
 
     next
 
-_STR2kr:
-    unimplemented
-
+# addr8_1 addr8_0 -- addr8_1 addr8_0 val8_1 val8_0
 _LDA2kr:
-    unimplemented
+    rpeeks_top rcx, rax, al, r13w   # read addr8_0 and addr8_1
+    mpeek2 al, bl, rcx
+    rpush2 al, bl                   # write val8_1 and val8_0
+    next
 
+# val8_1 val8_0 addr8_1 addr8_0 -- va8_1 val8_0 addr8_1 addr8_0
 _STA2kr:
-    unimplemented
+    rpeeks_top rcx, r13, r13b, ax   # read addr8_0 and addr8_1
+    deczx r13, r13b
+    rpeek2 al, bl, r13              # read val8
+    mpoke2 rcx, bl, al              # write val8
+    next
 
+# device8 -- device8 value8_1 value8_0
 _DEI2kr:
-    unimplemented
+    precall
+    call dei_2kr_entry
+    postcall
+    next
 
+# value8_1 value8_0 device8 -- value8_1 value8_0 device8
 _DEO2kr:
-    unimplemented
+    precall
+    call deo_2kr_entry
+    postcall
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 result8_1 result8_0
+.macro binary_op2kr, op 
+    rpeeks_top bx, rcx, cl, r13w  # read b8_0 and b8_1
+    deczx rcx, cl
+    rpeeks ax, rcx, cl, r13w      # read a8_0 and a8_1
+    \op ax, bx 
+    rpushs ax, al                 # write sum8_1 and sum8_0
+.endm
+
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 sum8_1 sum8_0
 _ADD2kr:
-    unimplemented
+    binary_op2kr add
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 diff8_1 diff8_0
 _SUB2kr:
-    unimplemented
+    binary_op2kr sub
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
 _MUL2kr:
-    unimplemented
+    binary_op2kr mul
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 quot8_1 quot8_0
 _DIV2kr:
-    unimplemented
+    binary_op2kr div 
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 and8_1 and8_0
 _AND2kr:
-    unimplemented
+    binary_op2kr and
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 or8_1 or8_0
 _ORA2kr:
-    unimplemented
+    binary_op2kr or
+    next
 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 xor8_1 xor8_0
 _EOR2kr:
-    unimplemented
+    binary_op2kr xor
+    next
 
 _SFT2kr:
     # read shift8
