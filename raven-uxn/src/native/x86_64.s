@@ -62,12 +62,28 @@
     mov \ob, byte ptr [r8 + \i]
 .endm
 
+.macro mpeek_zx, o, i
+    movzx \p, byte ptr [r8 + \i]
+.endm
+
 # Read byte from RAM at index x onto o1b and from x + 1 onto o2b. x is set with
 # the index of the second value.
 .macro mpeek2, o1b, o2b, x, xw
     mpeek \o1b, \x
     inczx \x, \xw
     mpeek \o2b, \x
+.endm
+
+# Read a short from RAM at index x onto o.
+#
+# After execution, x is set with the index of the lower byte and r with the
+# lower byte.
+.macro mpeeks, o, x, xw, r
+    mpeek_zx \o, \x
+    inczx \x, \xw
+    mpeek_zx \r
+    shl \o, 8
+    or \o, \r
 .endm
 
 # Write the value from i2b onto RAM at index present in i1
@@ -90,10 +106,11 @@
     movzx \o, \ow
 .endm
 
-# Copy current program counter to register reg
-#.macro nindex, reg 
-#    mov \reg, r9
-#.endm
+# Move the program counter by the offset iw
+.macro nseek, iw
+    add r9w, \iw
+    movzx r9, r9w
+.endm
 
 # Load next instruction and increment program counter
 # reg - register to store the read instruction
@@ -102,22 +119,12 @@
     inczx r9, r9w
 .endm
 
-.macro nread_zx, reg
-    movzx \reg, byte ptr [r8 + r9]
+# Read next byte from PC onto o. The rest of the bits of o are zeroed.
+.macro nread_zx, o
+    movzx \o byte ptr [r8 + r9]
     inczx r9, r9w
 .endm
 
-.macro nreads, h, l
-    nread \l
-    xchg \h, \l
-    nread \l
-.endm
-
-# Move the program counter by the offset iw
-.macro nseek, iw
-    add r9w, \iw
-    movzx r9, r9w
-.endm
 
 # Write value in ib to the offset from PC present in iow.
 # After execution x contains the index into RAM where the value was written.
@@ -139,12 +146,6 @@
     mov rbx, [r12 + rax * 8]
     jmp rbx
 .endm
-
-.macro unimplemented
-    int3
-    next
-.endm
-
 
 # Read index of data stack, ib bytes down from the top onto o.
 .macro dindex, o, ob, ib
@@ -188,7 +189,7 @@
     dpeek \o2b, \x
 .endm 
 
-# Read a short from top of return stack onto o. x is modified to have the index
+# Read a short from top of data stack onto o. x is modified to have the index
 # of the higher byte.
 #
 # After execution, r contains the value of the higher byte.
@@ -348,6 +349,21 @@
     deczx \x, \xb
     rpeek \o2b, \x
 .endm 
+
+# Read a short from top of return stack onto o. x is modified to have the index
+# of the higher byte.
+#
+# After execution, r contains the value of the higher byte.
+#
+# NOTE: We do not read a word directly and use xchg to swap endianness, as we
+# may not always have the short to be word aligned.
+.macro rpeeks, o, x, xb, r
+    rpeek_zx \o, \x
+    deczx \x, \xb
+    rpeek_zx \r, \x
+    shl \r, 8
+    or \o, \r
+.endm
 
 # Read byte from top of return stack onto the ob
 .macro rpeek_top, ob.
@@ -663,10 +679,10 @@ _JCN:
 ____JCN_next:
     next
 
-# addr8 -- | ret8_1 ret8_0
 .macro _stash_pc
     rpushs r8w, ax, ah, al  # write ret8_1 and ret8_0
 .endm
+# addr8 -- | ret8_1 ret8_0
 _JSR:
     _jmp
     _stash_pc
@@ -778,13 +794,10 @@ _ORA:
 _EOR:
     binary_op xor
 
+# a8 shift8 -- c8
 _SFT:
-    # read shift8
-    dpeek_top al
-    ddrop
-
-    # read byte
-    dpeek_top bl
+    dpop al         # read shift8
+    dpeek_top bl    # read a8
 
     # shift right
     mov cl, al
@@ -796,13 +809,21 @@ _SFT:
     shr cl, 4
     shl bl, cl
 
-    # write back byte to stack
-    dpoke_top bl
+    dpoke_top bl    # write c8
 
     next
 
+# cond8 --
 _JCI:
-    unimplemented
+    dpop cl     # read cond8
+    test cl, cl 
+    jz ____JCI_skip
+    _jmi
+    jmp ____JCI_next
+____JCI_skip:
+    nseek 2
+____JCI_next:
+    next
 
 # a1 a0 -- a1+carry a0+1
 _INC2:
@@ -1082,36 +1103,33 @@ _ORA2:
 _EOR2:
     binary_op2 xor
 
+# a8_1 a8_0 shift8 -- c8_1 c8_0
 _SFT2:
-    # read shift8
-    dpeek_top r13b
-    ddrop
-
-    # read short
-    dpeeks_top ax, al, rbx, bl
-    dpeek_top 
+    dpop al          # read shift8
+    dpops bx, r13w   # read a8_1 and a8_0
 
     # shift right
-    mov cl, r13b
+    mov cl, al
     and cl, 0xf
-    shr ax, cl
+    shr bx, cl
 
     # shift left
-    mov cl, r13b
+    mov cl, al
     shr cl, 4
-    shl ax, cl
+    shl bx, cl
 
-    # write back short to stack
-    dpokes_top ah, al, rbx, bl
+    dpushs bx, bl   # write c8_1 and c8_0
 
     next
 
+# --
+.macro _jmi
+    mov rcx, r9
+    mpeeks ax, rcx, cx, bx  # read jump offset
+    nseek ax                # update PC
+.endm
 _JMI:
-    # read jump offset
-    nreads ah, al
-
-    nseek ax
-
+    _jmi
     next
 
 # a -- a+1
@@ -1360,13 +1378,10 @@ _EORr:
     binary_opr xor
     next
 
+# a8 shift8 -- c8
 _SFTr:
-    # read shift8
-    rpeek_top al
-    rdrop
-
-    # read byte
-    rpeek_top bl
+    rpop al         # read shift8
+    rpeek_top bl    # read byte
 
     # shift right
     mov cl, al
@@ -1378,21 +1393,14 @@ _SFTr:
     shr cl, 4
     shl bl, cl
 
-    # write back byte to stack
-    rpoke_top bl
+    rpoke_top bl    # write c8
 
     next
 
+# --
 _JSI:
-    # read the jump offset from code
-    nreads ah, al
-
-    nindex rbx
-
-    rpushs bh, bl
-
-    nseek ax
-
+    _stash_pc
+    _jmi
     next
 
 # a1 a0 -- a1+carry a0+1
@@ -1674,13 +1682,10 @@ _EOR2r:
     binary_op2r xor 
     next
 
+# a8_1 a8_0 shift8 -- c8_1 c8_0
 _SFT2r:
-    # read shift8
-    rpeek_top al
-    rdrop
-
-    # read short
-    rpeeks_top bx, bl, r13, r13b
+    rpop al          # read shift8
+    rpops bx, r13w   # read a8_1 and a8_0
 
     # shift right
     mov cl, al
@@ -1692,8 +1697,7 @@ _SFT2r:
     shr cl, 4
     shl bx, cl
 
-    # write back short to stack
-    rpokes_top bh, bl, rcx, cl
+    rpushs bx, bl   # write c8_1 and c8_0
 
     next
 
@@ -1907,10 +1911,6 @@ _DEOk:
     postcall
     next
 
-.macro binary_opk op
-    unimplemented
-.endm
-
 # a8 b8 -- a8 b8 result8
 .macro binary_opk, op 
     dpeek2_top bl, al, rcx, cl  # read b8 and a8
@@ -1953,12 +1953,9 @@ _EORk:
     binary_opk xor
     next
 
+# a8 shift8 -- a8 shift8 c8
 _SFTk:
-    # read shift8
-    dpeek_top al
-
-    # read byte
-    dpeek_top bl
+    dpeek2_top al, bl, rcx, cl  # read shift8 and a8
 
     # shift right
     mov cl, al
@@ -1970,8 +1967,7 @@ _SFTk:
     shr cl, 4
     shl bl, cl
 
-    # write back byte to stack
-    dpush bl
+    dpoke_top bl    # write c8
 
     next
 
@@ -2264,13 +2260,11 @@ _EOR2k:
     binary_op2k xor
     next
 
+# a8_1 a8_0 shift8 -- a8_1 a8_0 shift8 c8_1 c8_0
 _SFT2k:
-    # read shift8
-    dpeek_top al
-
-    # read short
-    dpeek_top bl
-    dpeek bh, 1, r13, r13b
+    dpeek_top al          # read shift8
+    dindex r13, r13b, 1
+    dpeeks bx, r13, r13b, r14b   # read a8_1 and a8_0
 
     # shift right
     mov cl, al
@@ -2282,7 +2276,7 @@ _SFT2k:
     shr cl, 4
     shl bx, cl
 
-    dpushs bx, bl
+    dpushs bx, bl   # write c8_1 and c8_0
 
     next
 
@@ -2537,12 +2531,9 @@ _EORkr:
     binary_opkr xor 
     next
 
+# a8 shift8 -- a8 shift8 c8
 _SFTkr:
-    # read shift8
-    rpeek_top al
-
-    # read byte
-    rpeek_top bl
+    rpeek2_top al, bl, rcx, cl  # read shift8 and a8
 
     # shift right
     mov cl, al
@@ -2554,11 +2545,9 @@ _SFTkr:
     shr cl, 4
     shl bl, cl
 
-    # write back byte to stack
-    rpush bl
+    rpoke_top bl    # write c8
 
     next
-
 _LIT2r:
     # higher byte
     nread al
@@ -2850,12 +2839,11 @@ _EOR2kr:
     binary_op2kr xor
     next
 
+# a8_1 a8_0 shift8 -- a8_1 a8_0 shift8 c8_1 c8_0
 _SFT2kr:
-    # read shift8
-    rpeek_top al
-
-    # read short
-    rpeeks_top bx, bl, r13, r13b
+    rpeek_top al          # read shift8
+    rindex r13, r13b, 1
+    rpeeks bx, r13, r13b, r14b   # read a8_1 and a8_0
 
     # shift right
     mov cl, al
@@ -2867,8 +2855,7 @@ _SFT2kr:
     shr cl, 4
     shl bx, cl
 
-    # write back short to stack
-    dpushs bx, bl
+    rpushs bx, bl   # write c8_1 and c8_0
 
     next
 
