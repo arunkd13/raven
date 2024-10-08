@@ -1,4 +1,4 @@
-# TODO Check all instructions starting from _SFT
+# TODO: Review from dindex macro
 
 # rdi - stack pointer (&mut [u8; 256])
 # rsi - stack index (u8)
@@ -11,50 +11,60 @@
 # r12 - Jump table pointer (loaded in native_entry)
 # r13-14, rcx, rbx, rax - scratch registers
 
-# 1. Register parameters that are only read are called i and the ones
-# that are only written to are called o. Registers that are both read and
+# 1. Register parameters that are only read, are named i and the ones
+# that are only written to are named o. Registers that are both read and
 # written are named x. Registers that are used as temporary storage are called r.
-#
+# 
 # 2. When there are more than one parameters involved, a number suffix is added.
 # e.g. i1, o2
 #
-# 3. Some macros require the name of the lower byte part of a register which
-# may need to be passed in addition to the register. These parameters have the
-# suffix b.
+# 3. Some macros require the name of additional components of a register to be
+# passed which are passed in addition to the main register.
+# 
+# The lower byte part of a register is named with suffix b.
 # e.g. i1b, o2b
 #
-# 4. When the word part of the register are needed, the parameter will have the
-# suffix w.
+# The lower word part of a register is named with suffix w.
 # e.g. i1w, o2w
 #
-# 5. When the lower and upper halfs of the word part are needed, the parameters
-# will have the suffix l and h.
+# The lower and upper halfs of the word part are  named with the suffix l and h.
 # e.g. i1l, i1h
 #
-# 6. Parameters with constant values are named as c.
+# When the macro works with any part of a register, the parameter is named with
+# the suffix p.
+# e.g. ip, o1p
+#
+# When the macro works with either the full register or a part, the parameter is
+# named with the suffix _.
+# e.g. i1_, x2_
+#
+# Parameters with constant values are named as c.
+#
+# 4. The input and output for the macros are documented and the side effects on
+# x and r are noted separately.
 
-# Increment a part of a register
-.macro inczx, x, xb 
-    inc \xb
-    movzx \x, \xb
+# Increment a part of a register and zero out rest of the bits
+.macro inczx, x, xp 
+    inc \xp
+    movzx \x, \xp
 .endm
 
-# Decrement a part of a register
-.macro deczx, x, xb
-    dec \xb
-    movzx \x, \xb
+# Decrement a part of a register and zero out rest of the bits.
+.macro deczx, x, xp
+    dec \xp
+    movzx \x, \xp
 .endm
 
-# Add iw to a part of x
-.macro addzx, x, xw, iw
-    add \xw, \iw
-    movzx \x, \xw
+# Add iw to a part of x.
+.macro addzx, x, xp, ip
+    add \xp, \ip
+    movzx \x, \xp
 .endm
 
 # Subtract iw from a part of x
-.macro subzx, x, xw, iw
-    sub \xw, \iw
-    movzx \x, \xw
+.macro subzx, x, xp, ip
+    sub \xp, \ip
+    movzx \x, \xp
 .endm
 
 # Read byte from RAM at index i onto register ob
@@ -62,28 +72,31 @@
     mov \ob, byte ptr [r8 + \i]
 .endm
 
+# Read byte from RAM at index i onto register o with rest of the bits zeroed.
 .macro mpeek_zx, o, i
     movzx \p, byte ptr [r8 + \i]
 .endm
 
-# Read byte from RAM at index x onto o1b and from x + 1 onto o2b. x is set with
-# the index of the second value.
+# Read byte from RAM at index x onto o1b and from x + 1 onto o2b.
+#
+# NOTE: x is set with the index of the second value.
 .macro mpeek2, o1b, o2b, x, xw
     mpeek \o1b, \x
     inczx \x, \xw
     mpeek \o2b, \x
 .endm
 
-# Read a short from RAM at index x onto o.
+# Read a short from RAM at index x onto o_. Rest of the bits of o_ are zeroed
+# out.
 #
-# After execution, x is set with the index of the lower byte and r with the
+# NOTE: x is set with the index of the lower byte and r_ with the value of the
 # lower byte.
-.macro mpeeks, o, x, xw, r
-    mpeek_zx \o, \x
+.macro mpeeks, o_, x, xw, r_
+    mpeek_zx \o_, \x
     inczx \x, \xw
-    mpeek_zx \r
-    shl \o, 8
-    or \o, \r
+    mpeek_zx \r_
+    shl \o_, 8
+    or \o_, \r_
 .endm
 
 # Write the value from i2b onto RAM at index present in i1
@@ -92,7 +105,9 @@
 .endm
 
 # Write the value from i1b onto RAM at index present in x and value from i2b
-# at x + 1. x is set to the index where the second value was written.
+# at x + 1.
+#
+# NOTE: x is set to the index where the second value was written.
 .macro mpoke2, x, xw, i1b, i2b
     mpoke \x, \i1b
     inczx \x, \xw
@@ -106,38 +121,27 @@
     movzx \o, \ow
 .endm
 
-# Move the program counter by the offset iw
+# Move the program counter by the offset iw.
 .macro nseek, iw
-    add r9w, \iw
-    movzx r9, r9w
+    addzx r9, r9w, \iw
+.endm
+
+# Move the program counter the next instruction.
+.macro nnext
+    inczx r9, r9w
 .endm
 
 # Load next instruction and increment program counter
 # reg - register to store the read instruction
 .macro nread, reg
     mov \reg, byte ptr [r8 + r9]
-    inczx r9, r9w
+    nnext
 .endm
 
 # Read next byte from PC onto o. The rest of the bits of o are zeroed.
 .macro nread_zx, o
     movzx \o byte ptr [r8 + r9]
-    inczx r9, r9w
-.endm
-
-
-# Write value in ib to the offset from PC present in iow.
-# After execution x contains the index into RAM where the value was written.
-.macro npoke, x, xw, ib
-    addzx \x, \xw, r9w
-    mpoke \x, \ib
-.endm
-
-.macro npoke2 x, xw, i1b, i2b
-    addzx \x, \xw, r9w
-    mpoke \x, \xw, \i1b
-    inczx \x, \xw
-    mpoke \x, \i2b
+    nnext
 .endm
 
 .macro next
@@ -171,7 +175,7 @@
 
 # Read byte from data stack, at index i, onto ob.
 #
-# After execution, r contains the index of the value read.
+# NOTE:, r contains the index of the value read.
 .macro dpeek, ob, i
     mov \ob, byte ptr [rdi + \i]
 .endm
@@ -192,7 +196,7 @@
 # Read a short from top of data stack onto o. x is modified to have the index
 # of the higher byte.
 #
-# After execution, r contains the value of the higher byte.
+# NOTE:, r contains the value of the higher byte.
 #
 # NOTE: We do not read a word directly and use xchg to swap endianness, as we
 # may not always have the short to be word aligned.
@@ -221,7 +225,7 @@
 
 # Read byte from top of data stack onto o1b and the byte under it onto o2b.
 #
-# After execution r has the index of the second value read.
+# NOTE: r has the index of the second value read.
 .macro dpeek2_top, o1b, o2b, r, rb
     dpeek_top \o1b
     dindex \r, \rb, 1
@@ -230,7 +234,7 @@
 
 # Read a short from top of data stack onto o.
 #
-# After execution r2w contains the higher byte and r1 contains its index.
+# NOTE: r2w contains the higher byte and r1 contains its index.
 .macro dpeeks_top, o, r1, r1b, r2w
     movzx \r1, sil
     dpeeks \o, \r1, \r1b, \r2w
@@ -332,7 +336,7 @@
 
 # Read byte from return stack, at index i, onto ob.
 #
-# After execution, r contains the index of the value read.
+# NOTE:, r contains the index of the value read.
 .macro rpeek, ob, i
     mov \ob, byte ptr [rdx + \i]
 .endm
@@ -353,7 +357,7 @@
 # Read a short from top of return stack onto o. x is modified to have the index
 # of the higher byte.
 #
-# After execution, r contains the value of the higher byte.
+# NOTE:, r contains the value of the higher byte.
 #
 # NOTE: We do not read a word directly and use xchg to swap endianness, as we
 # may not always have the short to be word aligned.
@@ -382,7 +386,7 @@
 
 # Read byte from top of return stack onto  o1b and the byte under it onto o2b.
 #
-# After execution r has the index of the second value read.
+# NOTE: r has the index of the second value read.
 .macro rpeek2_top, o1b, o2b, r, rb
     rpeek_top \o1b
     rindex \r, \rb, 1
@@ -391,7 +395,7 @@
 
 # Read a short from top of return stack onto ow.
 #
-# After execution r2w contains the higher byte and r1 contains its index.
+# NOTE: r2w contains the higher byte and r1 contains its index.
 .macro rpeeks_top, ow, r1, r1b, r2w
     rpeek_top_zx \ow
     rindex r1, r1b
