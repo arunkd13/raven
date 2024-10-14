@@ -303,11 +303,11 @@
     dpush \i2b
 .endm
 
-# Pushes the higher byte of iw and then the lower byte of iw onto data stack.
-.macro dpushs, iw, ib, rb
-    mov \rb, \ib
-    shr \iw, 8
-    dpush \ib
+# Pushes the higher byte of xw and then the lower byte of xw onto data stack.
+.macro dpushs, xw, xb, rb
+    mov \rb, \xb
+    shr \xw, 8
+    dpush \xb
     dpush \rb
 .endm
 
@@ -465,11 +465,13 @@
     rpush \i2b
 .endm
 
-# Pushes the higher byte of iw and then the lower byte of iw onto return stack.
-.macro rpushs, iw, ib, rb
-    mov \rb, \ib
-    shr \iw, 8
-    rpush \ib
+# Pushes the higher byte of xw and then the lower byte of iw onto return stack.
+#
+# Note: After execution, xw contains only the lower byte.
+.macro rpushs, xw, xb, rb
+    mov \rb, \xb
+    shr \xw, 8
+    rpush \xb
     rpush \rb
 .endm
 
@@ -611,7 +613,7 @@ _DUP:
 
 # a b -- a b a
 _OVR:
-    rindex rbx, bl, 1
+    dindex rbx, bl, 1
     dpeek al, rbx       # read a
     dpush al            # write a
     next
@@ -667,13 +669,14 @@ ____JCN_next:
     next
 
 .macro _stash_pc
-    rpushs r9w, r9b, al   # write ret8_1 and ret8_0
+    mov ax, r9w
+    rpushs ax, al, bl   # write ret8_1 and ret8_0
 .endm
 
 # addr8 -- | ret8_1 ret8_0
 _JSR:
-    _jmp
     _stash_pc
+    _jmp
     next
 
 # a -- | a
@@ -968,8 +971,8 @@ ____JCN2_next:
 
 # addr8_1 addr8_0 -- | ret8_1 ret8_0
 _JSR2:
-    _jmp2
     _stash_pc
+    _jmp2
     next
 
 # a1 a0 -- | a1 a0
@@ -996,7 +999,7 @@ _STZ2:
     dpop_zx rax             # read addr8
     dpop2 bl, cl            # read val8_0 and val8_1
 
-    mpoke2 rax, al, cl, bl  # write val8_1 and val8_0
+    mpoke2 rax, ax, cl, bl  # write val8_1 and val8_0
 
     next
 
@@ -1031,9 +1034,9 @@ _LDA2:
 
 # val8_1 val8_0 addr8_1 addr8_0 --
 _STA2:
-    dpops rcx, rax      # read addr8_0 and addr8_1
-    dpop2 al, bl        # read val8
-    mpoke2 rcx, bl, al  # write val8
+    dpops rcx, rax          # read addr8_0 and addr8_1
+    dpop2 al, bl            # read val8_0 and val8_1
+    mpoke2 rcx, cx, bl, al  # write val8_1 and val8_0
     next
 
 # device8 -- value8_1 value8_0
@@ -1246,8 +1249,9 @@ ____JCNr_next:
 
 # addr8 -- ret8_1 ret8_0
 _JSRr:
+    mov r14w, r9w
     _jmp_r
-    _stash_pc
+    rpushs r14w, r14b, al   # write ret8_1 and ret8_0
     next
 
 # | a -- a |
@@ -1393,7 +1397,9 @@ _SFTr:
 
 # --
 _JSI:
-    _stash_pc
+    mov ax, r9w
+    add ax, 2
+    rpushs ax, al, bl
     _jmi
     next
 
@@ -1532,8 +1538,9 @@ ____JCN2r_next:
 
 # addr8_1 addr8_0 -- ret8_1 ret8_0
 _JSR2r:
+    mov r14w, r9w
     _jmp_2r
-    _stash_pc
+    rpushs r14w, r14b, al   # write ret8_1 and ret8_0
     next
 
 # | a1 a0 -- a1 a0 |
@@ -1560,7 +1567,7 @@ _STZ2r:
     rpop_zx rax             # read addr8
     rpop2 bl, cl            # read val8_0 and val8_1
 
-    mpoke2 rax, al, cl, bl  # write val8_1 and val8_0
+    mpoke2 rax, ax, cl, bl  # write val8_1 and val8_0
 
     next
 
@@ -1595,9 +1602,9 @@ _LDA2r:
 
 # val8_1 val8_0 addr8_1 addr8_0 --
 _STA2r:
-    rpops rcx, rax      # read addr8_0 and addr8_1
-    rpop2 al, bl        # read val8
-    mpoke2 rcx, bl, al  # write val8
+    rpops rcx, rax          # read addr8_0 and addr8_1
+    rpop2 al, bl            # read val8_0 and val8_1
+    mpoke2 rcx, cx, bl, al  # write val8_1 and val8_0
     next
 
 # device8 -- value8_1 value8_0
@@ -1811,8 +1818,8 @@ ____JCNk_next:
 
 # addr8 -- addr8 | ret8_1 ret8_0
 _JSRk:
-    _jmp_k
     _stash_pc
+    _jmp_k
     next
 
 # a -- a | a
@@ -1955,7 +1962,7 @@ _SFTk:
     shr cl, 4
     shl bl, cl
 
-    dpoke_top bl    # write c8
+    dpush bl    # write c8
 
     next
 
@@ -2032,7 +2039,7 @@ _OVR2k:
     dpeek2 al, bl, rcx, cl  # read a0 and a1
 
     dpush2 bl, al           # write a1 and a0
-    dpush2 r13b, r14b       # write b1 and b0
+    dpush2 r14b, r13b       # write b1 and b0
     dpush2 bl, al           # write a1 and a0
     
     next
@@ -2091,14 +2098,14 @@ ____JCN2k_next:
 
 # addr8_1 addr8_0 -- addr8_1 addr8_0 | ret8_1 ret8_0
 _JSR2k:
-    _jmp_2k
     _stash_pc
+    _jmp_2k
     next
 
 # a1 a0 -- a1 a0 | a1 a0
 _STH2k:
-    dpeek2 al, bl, rcx, cl  # read a0 and a1
-    rpush2 bl, al           # write a1 and a0
+    dpeek2_top al, bl, rcx, cl  # read a0 and a1
+    rpush2 bl, al               # write a1 and a0
     next
 
 # addr8 -- addr8 value8_1 value8_0
@@ -2169,8 +2176,8 @@ _LDA2k:
 _STA2k:
     dpeeks_top rcx, r13, r13b, rax  # read addr8_0 and addr8_1
     deczx r13, r13b
-    dpeek2 al, bl, r13, r13b        # read val8
-    mpoke2 rcx, bl, al              # write val8
+    dpeek2 al, bl, r13, r13b        # read val8_0 and val8_1
+    mpoke2 rcx, cx, bl, al          # write val8_1 and val8_0
     next
 
 # device8 -- device8 value8_1 value8_0
@@ -2292,7 +2299,7 @@ _NIPkr:
 
 # a b -- a b b a
 _SWPkr:
-    dindex rbx, bl, 1
+    rindex rbx, bl, 1
     rpeek_top al        # read b
     rpush al            # write b
     rpeek al, rbx       # read a
@@ -2384,10 +2391,11 @@ _JCNkr:
 ____JCNkr_next:
     next
 
-# addr8 -- addr8 ret8_1 ret8_0
+# | addr8 -- ret8_1 ret8_0 | addr8
 _JSRkr:
+    mov r14w, r9w
     _jmp_kr
-    _stash_pc
+    dpushs r14w, r14b, al   # write ret8_1 and ret8_0
     next
 
 # | a -- a | a
@@ -2530,7 +2538,7 @@ _SFTkr:
     shr cl, 4
     shl bl, cl
 
-    rpoke_top bl    # write c8
+    rpush bl    # write c8
 
     next
 _LIT2r:
@@ -2608,7 +2616,7 @@ _OVR2kr:
     rpeek2 al, bl, rcx, cl  # read a0 and a1
 
     rpush2 bl, al           # write a1 and a0
-    rpush2 r13b, r14b       # write b1 and b0
+    rpush2 r14b, r13b       # write b1 and b0
     rpush2 bl, al           # write a1 and a0
     
     next
@@ -2665,16 +2673,17 @@ _JCN2kr:
 ____JCN2kr_next:
     next
 
-# addr8_1 addr8_0 | addr8_1 addr8_0 ret8_1 ret8_0
+# | addr8_1 addr8_0 -- ret8_1 ret8_0 | addr8_1 addr8_0 
 _JSR2kr:
+    mov r14w, r9w
     _jmp_2kr
-    _stash_pc
+    dpushs r14w, r14b, al   # write ret8_1 and ret8_0
     next
 
 # | a1 a0 -- a1 a0 | a1 a0
 _STH2kr:
-    rpeek2 al, bl, rcx, cl  # read a0 and a1
-    dpush2 bl, al           # write a1 and a0
+    rpeek2_top al, bl, rcx, cl  # read a0 and a1
+    dpush2 bl, al               # write a1 and a0
     next
 
 # addr8 -- addr8 value8_1 value8_0
@@ -2692,15 +2701,15 @@ _LDZ2kr:
 
 # val8_1 val8_0 addr8 -- val8_1 val8_0 addr8
 _STZ2kr:
-    dpeek_top_zx rax            # read addr8
+    rpeek_top_zx rax            # read addr8
 
-    dindex rcx, cl, 2
-    dpeek bl, rcx           # read val8_1
+    rindex rcx, cl, 2
+    rpeek bl, rcx           # read val8_1
     mpoke rax, bl               # write val8_1
 
     inczx rax, al
     inczx rcx, cl
-    dpeek bl, rcx           # read val8_0
+    rpeek bl, rcx           # read val8_0
     mpoke rax bl                # write val8_0
 
     next
@@ -2746,7 +2755,7 @@ _STA2kr:
     rpeeks_top rcx, r13, r13b, rax  # read addr8_0 and addr8_1
     deczx r13, r13b
     rpeek2 al, bl, r13, r13b        # read val8
-    mpoke2 rcx, bl, al              # write val8
+    mpoke2 rcx, cx, bl, al              # write val8
     next
 
 # device8 -- device8 value8_1 value8_0
@@ -2787,7 +2796,9 @@ _MUL2kr:
     rpeeks_top bx, rcx, cl, r13w  # read b8_0 and b8_1
     deczx rcx, cl
     rpeeks ax, rcx, cl, r13w      # read a8_0 and a8_1
+    mov r14, rdx
     mul bx 
+    mov rdx, r14
     rpushs ax, al, bl                 # write sum8_1 and sum8_0
     next
 
