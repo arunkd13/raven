@@ -141,6 +141,13 @@
     nnext
 .endm
 
+.macro nreads, o_, r_
+    nread_zx \o_
+    shl \o_, 8
+    nread_zx \r_
+    or \o_, \r_
+.endm
+
 .macro next
     nread_zx rax
     # jump to corresponding instruction handler from the jump table
@@ -227,7 +234,7 @@
 #
 # NOTE: r2w contains the higher byte and r1 contains its index.
 .macro dpeeks_top, o_, r1, r1b, r2_
-    movzx \r1, sil
+    mov \r1, rsi
     dpeeks \o_, \r1, \r1b, \r2_
 .endm
 
@@ -240,6 +247,12 @@
 # Pop top byte from the data stack onto o and set rest of the higher bits to 0
 .macro dpop_zx, o
     dpeek_top_zx \o
+    ddrop
+.endm
+
+# Pop top byte from the data stack onto o and sign extend to the higher bits.
+.macro dpop_sx, o
+    dpeek_top_sx \o
     ddrop
 .endm
 
@@ -258,7 +271,6 @@
     shl \r_, 8
     or \o_, \r_
 .endm
-
 
 # Replace byte at i1b positions down from the top of the data stack with the
 # value from i2b
@@ -291,10 +303,12 @@
     dpush \i2b
 .endm
 
-.macro dpushs, s, sl
-    dpush \sl
-    shr \s, 8
-    dpush \sl
+# Pushes the higher byte of iw and then the lower byte of iw onto data stack.
+.macro dpushs, iw, ib, rb
+    mov \rb, \ib
+    shr \iw, 8
+    dpush \ib
+    dpush \rb
 .endm
 
 # Read index of return stack ib bytes down from the top onto o.
@@ -376,7 +390,7 @@
 #
 # NOTE: r2w contains the higher byte and r1 contains its index.
 .macro rpeeks_top, o_, r1, r1b, r2_
-    movzx \r1, sil
+    mov \r1, r15
     rpeeks \o_, \r1, \r1b, \r2_
 .endm
 
@@ -389,6 +403,12 @@
 # Pop top byte from the return stack onto o and set rest of the higher bits to 0
 .macro rpop_zx, o
     rpeek_top_zx \o
+    rdrop
+.endm
+
+# Pop top byte from the return stack onto o and sign extend to the higher bits.
+.macro rpop_sx, o
+    rpeek_top_sx \o
     rdrop
 .endm
 
@@ -415,10 +435,9 @@
     mov byte ptr [rdi + \x], \i2b
 .endm
 
-# Replace top byte of return stack with reg
-# reg - byte sized register
-.macro rpoke_top, reg
-    mov byte ptr [rdx + r15], \reg
+# Replace top byte of data stack with value from ib
+.macro rpoke_top, ib
+    mov byte ptr [rdx + r15], \ib
 .endm
 
 # Replace top byte of return stack with value from i1b and the byte under the top
@@ -447,10 +466,11 @@
 .endm
 
 # Pushes the higher byte of iw and then the lower byte of iw onto return stack.
-.macro rpushs, iw, il
-    rpush \il
+.macro rpushs, iw, ib, rb
+    mov \rb, \ib
     shr \iw, 8
-    rpush \il
+    rpush \ib
+    rpush \rb
 .endm
 
 .macro precall
@@ -616,17 +636,17 @@ _NEQ:
 
 # a b -- bool8
 _GTH:
-    cmp_op setg
+    cmp_op seta
     next
 
 # a b -- bool8
 _LTH:
-    cmp_op setl
+    cmp_op setb
     next
 
 # addr8
 .macro _jmp
-    dpop_zx ax  # read addr8
+    dpop_sx ax  # read addr8
     nseek ax    # write PC
 .endm
 _JMP:
@@ -635,7 +655,7 @@ _JMP:
 
 # cond8 addr8 --
 _JCN:
-    dpop_zx bx  # read addr8
+    dpop_sx bx  # read addr8
     dpop al     # read cond8
     
     test al, al
@@ -647,7 +667,7 @@ ____JCN_next:
     next
 
 .macro _stash_pc
-    rpushs r8w, r8b  # write ret8_1 and ret8_0
+    rpushs r9w, r9b, al   # write ret8_1 and ret8_0
 .endm
 
 # addr8 -- | ret8_1 ret8_0
@@ -742,22 +762,26 @@ _SUB:
     binary_op sub
     next
 
-# a8 b8 -- result8
-.macro binary_rax_op, op
-    dpop bl         # read b8
-    dpeek_top al    # read a8
-    \op bl 
-    dpoke_top al    # write result8
-.endm
-
 # a8 b8 -- a8*b8
 _MUL:
-    binary_rax_op mul
+    dpop bl         # read b8
+    dpeek_top al    # read a8
+    mul bl 
+    dpoke_top al    # write result8
     next
 
 # a8 b8 -- a8/b8
 _DIV:
-    binary_rax_op div
+    dpop bl         # read b8
+    test bl, bl
+    jz ____DIV_by_zero
+    dpeek_top al    # read a8
+    div bl 
+    jmp ____DIV_write_result
+____DIV_by_zero:
+    mov al, bl
+____DIV_write_result:
+    dpoke_top al    # write result8
     next
 
 # a8 b8 -- a&b
@@ -767,9 +791,11 @@ _AND:
 
 _ORA:
     binary_op or
+    next
 
 _EOR:
     binary_op xor
+    next
 
 # a8 shift8 -- c8
 _SFT:
@@ -791,8 +817,7 @@ _SFT:
     next
 
 .macro _jmi
-    mov rcx, r9
-    mpeeks ax, rcx, cx, bx  # read jump offset
+    nreads ax, bx           # read jump offset
     nseek ax                # update PC
 .endm
 
@@ -912,12 +937,12 @@ _NEQ2:
 
 # a1 a0 b1 b0 -- bool8
 _GTH2:
-    cmp_op2 setg
+    cmp_op2 seta
     next
 
 # a1 a0 b1 b0 -- bool8
 _LTH2:
-    cmp_op2 setl
+    cmp_op2 setb
     next
 
 # addr8_1 addr8_0 --
@@ -1030,7 +1055,7 @@ _DEO2:
     dpops bx, cx    # read b8_0 and b8_1
     dpops ax, cx    # read a8_0 and a8_1
     \op ax, bx 
-    dpushs ax, al   # write result8_1 and result8_0
+    dpushs ax, al, bl   # write result8_1 and result8_0
 .endm
 
 # a8_1 a8_0 b8_1 b8_0 -- sum8_1 sum8_0
@@ -1043,22 +1068,30 @@ _SUB2:
     binary_op2 sub
     next
 
-# a8_1 a8_0 b8_1 b8_0 -- result8_1 result8_0
-.macro binary_rax_op2, op
-    dpops bx, cx    # read b8_0 and b8_1
-    dpops ax, cx    # read a8_0 and a8_1
-    \op bx 
-    dpushs ax, al   # write result8_1 and result8_0
-.endm
-
 # a8_1 a8_0 b8_1 b8_0 -- prod8_1 prod8_0
 _MUL2:
-    binary_rax_op2 mul
+    dpops bx, cx    # read b8_0 and b8_1
+    dpops ax, cx    # read a8_0 and a8_1
+    mul bx 
+    dpushs ax, al, bl   # write result8_1 and result8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- quot8_1 quot8_0
 _DIV2:
-    binary_rax_op2 div
+    dpops bx, cx    # read b8_0 and b8_1
+    test bx, bx
+    jz ____DIV2_by_zero
+    dpops ax, cx    # read a8_0 and a8_1
+    mov r14, rdx
+    xor dx, dx
+    div bx 
+    mov rdx, r14
+    jmp ____DIV2_write_result
+____DIV2_by_zero:
+    ddrop2
+    mov ax, bx
+____DIV2_write_result:
+    dpushs ax, al, bl   # write result8_1 and result8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- and8_1 and8_0
@@ -1074,6 +1107,7 @@ _ORA2:
 # a8_1 a8_0 b8_1 b8_0 -- xor8_1 xor8_0
 _EOR2:
     binary_op2 xor
+    next
 
 # a8_1 a8_0 shift8 -- c8_1 c8_0
 _SFT2:
@@ -1090,7 +1124,7 @@ _SFT2:
     shr cl, 4
     shl bx, cl
 
-    dpushs bx, bl   # write c8_1 and c8_0
+    dpushs bx, bl, al   # write c9_1 and c8_0
 
     next
 
@@ -1160,8 +1194,8 @@ _OVRr:
 
 # a b -- bool8
 .macro cmp_opr, op
-    rpop al         # read b
-    rpeek_top bl    # read a
+    rpop bl         # read b
+    rpeek_top al    # read a
 
     cmp al, bl
     \op al
@@ -1180,17 +1214,17 @@ _NEQr:
 
 # a b -- bool8
 _GTHr:
-    cmp_opr setg
+    cmp_opr seta
     next
 
 # a b -- bool8
 _LTHr:
-    cmp_opr setl
+    cmp_opr setb
     next
 
 # addr8
 .macro _jmp_r
-    rpop_zx ax  # read addr8
+    rpop_sx ax  # read addr8
     nseek ax    # write PC
 .endm
 _JMPr:
@@ -1199,7 +1233,7 @@ _JMPr:
 
 # cond8 addr8 --
 _JCNr:
-    rpop_zx bx  # read addr8
+    rpop_sx bx  # read addr8
     rpop al     # read cond8
     
     test al, al
@@ -1301,21 +1335,26 @@ _SUBr:
     binary_opr sub
     next
 
-# a8 b8 -- result8
-.macro binary_rax_opr, op 
-    rpop bl         # read b8
-    rpeek_top al    # read b8 and a8
-    \op bl 
-    rpoke_top al    # write result8
-.endm
 # a8 b8 -- a8*b8
 _MULr:
-    binary_rax_opr mul
+    rpop bl         # read b8
+    rpeek_top al    # read b8 and a8
+    mul bl 
+    rpoke_top al    # write result8
     next
 
 # a8 b8 -- a8/b8
 _DIVr:
-    binary_rax_opr div
+    rpop bl         # read b8
+    test bl, bl
+    jz ____DIVr_by_zero
+    rpeek_top al    # read b8 and a8
+    div bl 
+    jmp ____DIVr_write_result
+____DIVr_by_zero:
+    mov al, bl
+____DIVr_write_result:
+    rpoke_top al    # write result8
     next
 
 # a8 b8 -- a8&b8
@@ -1462,12 +1501,12 @@ _NEQ2r:
 
 # a1 a0 b1 b0 -- bool8
 _GTH2r:
-    cmp_op2r setg
+    cmp_op2r seta
     next
 
 # a1 a0 b1 b0 -- bool8
 _LTH2r:
-    cmp_op2r setl
+    cmp_op2r setb
     next
 
 # addr8_1 addr8_0 --
@@ -1580,7 +1619,7 @@ _DEO2r:
     rpops bx, cx    # read b8_0 and b8_1
     rpops ax, cx    # read a8_0 and a8_1
     \op ax, bx 
-    rpushs ax, al   # write result8_1 and result8_0
+    rpushs ax, al, bl   # write result8_1 and result8_0
 .endm
 
 # a8_1 a8_0 b8_1 b8_0 -- sum8_1 sum8_0
@@ -1593,22 +1632,30 @@ _SUB2r:
     binary_op2r sub
     next
 
-# a8_1 a8_0 b8_1 b8_0 -- result8_1 result8_0
-.macro binary_rax_op2r, op 
-    rpops bx, cx    # read b8_0 and b8_1
-    rpops ax, cx    # read a8_0 and a8_1
-    \op bx 
-    rpushs ax, al   # write result8_1 and result8_0
-.endm
-
 # a8_1 a8_0 b8_1 b8_0 -- prod8_1 prod8_0
 _MUL2r:
-    binary_rax_op2r mul
+    rpops bx, cx    # read b8_0 and b8_1
+    rpops ax, cx    # read a8_0 and a8_1
+    div bx 
+    rpushs ax, al, bl   # write result8_1 and result8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- quot8_1 quot8_0
 _DIV2r:
-    binary_rax_op2r div
+    rpops bx, cx    # read b8_0 and b8_1
+    test bx, bx
+    jz ____DIV2r_by_zero
+    rpops ax, cx    # read a8_0 and a8_1
+    mov r14, rdx
+    xor dx, dx
+    div bx 
+    mov rdx, r14
+    jmp ____DIV2r_write_result
+____DIV2r_by_zero:
+    rdrop2
+    mov ax, bx
+____DIV2r_write_result:
+    rpushs ax, al, bl   # write result8_1 and result8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- and8_1 and8_0
@@ -1641,7 +1688,7 @@ _SFT2r:
     shr cl, 4
     shl bx, cl
 
-    rpushs bx, bl   # write c8_1 and c8_0
+    rpushs bx, bl, al   # write c8_1 and c8_0
 
     next
 
@@ -1699,7 +1746,8 @@ _ROTk:
 # a -- a a a
 _DUPk:
     dpeek_top al    # read a
-    dpush2 al       # write a and a
+    dpush2 al, al       # write a and a
+    next
 
 # a b -- a b a b a
 _OVRk:
@@ -1730,17 +1778,17 @@ _NEQk:
 
 # a b -- a b bool8
 _GTHk:
-    cmp_opk setg
+    cmp_opk seta
     next
 
 # a b -- a b bool8
 _LTHk:
-    cmp_opk setl
+    cmp_opk setb
     next
 
 # addr8 -- addr8
 .macro _jmp_k
-    dpeek_top_zx ax # read addr8
+    dpeek_top_sx ax # read addr8
     nseek ax        # write PC
 .endm
 _JMPk:
@@ -1749,7 +1797,7 @@ _JMPk:
 
 # cond8 addr8 -- cond8 addr8
 _JCNk:
-    dpeek_top_zx bx     # read addr8
+    dpeek_top_sx bx     # read addr8
     dindex rcx, cl, 1
     dpeek al, rcx       # read cond8
     
@@ -1856,20 +1904,26 @@ _SUBk:
     binary_opk sub
     next
 
-# a8 b8 -- a8 b8 result8
-.macro binary_rax_opk, op 
-    dpeek2_top bl, al, rcx, cl  # read b8 and a8
-    \op bl 
-    dpush al                    # write result8
-.endm
 # a8 b8 --- a8 b8 a8*b8
 _MULk:
-    binary_rax_opk mul
+    dpeek2_top bl, al, rcx, cl  # read b8 and a8
+    mul bl 
+    dpush al                    # write result8
     next
 
 # a8 b8 -- a8 b8 a8*b8
 _DIVk:
-    binary_rax_opk div 
+    dpeek_top bl                # read b8
+    test bl, bl
+    jz ____DIVk_by_zero
+    dindex rcx, cl, 1
+    dpeek al, rcx               # read a8
+    div bl 
+    jmp ____DIVk_write_result
+____DIVk_by_zero:
+    mov al, bl
+____DIVk_write_result:
+    dpush al                    # write result8
     next
 
 # a8 b8 -- a8 b8 a8&b8
@@ -1985,9 +2039,9 @@ _OVR2k:
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 .macro cmp_op2k, op
-    dpeeks_top ax, rcx, cl, r13w    # read b0 and b1
+    dpeeks_top bx, rcx, cl, r13w    # read b0 and b1
     deczx rcx, cl
-    dpeeks bx, rcx, cl, r13w        # read a0 and a1
+    dpeeks ax, rcx, cl, r13w        # read a0 and a1
 
     cmp ax, bx
     \op al
@@ -2005,17 +2059,17 @@ _NEQ2k:
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 _GTH2k:
-    cmp_op2k setg
+    cmp_op2k seta
     next
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 _LTH2k:
-    cmp_op2k setl
+    cmp_op2k setb
     next
 
 # addr8_1 addr8_0 -- addr8_1 addr8_0
 .macro _jmp_2k
-    dpeeks r9, rax, al, rbx
+    dpeeks_top r9, rax, al, rbx
 .endm
 _JMP2k:
     _jmp_2k
@@ -2024,6 +2078,7 @@ _JMP2k:
 # cond8 addr8_1 addr8_0 -- cond8 addr8_1 addr8_0
 _JCN2k:
     dpeeks_top rax, rcx, cl, rbx   # read addr8_0 and addr8_1
+    deczx rcx, cl
     dpeek bl, rcx                   # read cond8
 
     test bl, bl
@@ -2138,7 +2193,7 @@ _DEO2k:
     deczx rcx, cl
     dpeeks ax, rcx, cl, r13w        # read a8_0
     \op ax, bx 
-    dpushs ax, al                   # write sum8_1 and sum8_0
+    dpushs ax, al, bl                   # write sum8_1 and sum8_0
 .endm
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 sum8_1 sum8_0
@@ -2151,23 +2206,31 @@ _SUB2k:
     binary_op2k sub
     next
 
-# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 result8_1 result8_0
-.macro binary_rax_op2k, op
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
+_MUL2k:
     dpeeks_top bx, rcx, cl, r13w    # read b8_0 and b8_1
     deczx rcx, cl
     dpeeks ax, rcx, cl, r13w        # read a8_0
-    \op bx 
-    dpushs ax, al                   # write sum8_1 and sum8_0
-.endm
-
-# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
-_MUL2k:
-    binary_rax_op2k mul
+    mul bx 
+    dpushs ax, al, bl                   # write sum8_1 and sum8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 quot8_1 quot8_0
 _DIV2k:
-    binary_rax_op2k div
+    dpeeks_top bx, rcx, cl, r13w    # read b8_0 and b8_1
+    test bx, bx
+    jz ____DIV2k_by_zero
+    deczx rcx, cl
+    dpeeks ax, rcx, cl, r13w        # read a8_0
+    mov r14, rdx
+    xor dx, dx
+    div bx 
+    mov rdx, r14
+    jmp ____DIV2k_write_result
+____DIV2k_by_zero:
+    mov ax, bx
+____DIV2k_write_result:
+    dpushs ax, al, bl                   # write sum8_1 and sum8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 and8_1 and8_0
@@ -2201,7 +2264,7 @@ _SFT2k:
     shr cl, 4
     shl bx, cl
 
-    dpushs bx, bl   # write c8_1 and c8_0
+    dpushs bx, bl, al   # write c8_1 and c8_0
 
     next
 
@@ -2259,6 +2322,7 @@ _ROTkr:
 _DUPkr:
     rpeek_top al    # read a
     rpush2 al, al   # write a and a
+    next
 
 # a b -- a b a b a
 _OVRkr:
@@ -2289,17 +2353,17 @@ _NEQkr:
 
 # a b -- a b bool8
 _GTHkr:
-    cmp_opkr setg
+    cmp_opkr seta
     next
 
 # a b -- a b bool8
 _LTHkr:
-    cmp_opkr setl
+    cmp_opkr setb
     next
 
 # addr8 -- addr8
 .macro _jmp_kr
-    rpeek_top_zx ax # read addr8
+    rpeek_top_sx ax # read addr8
     nseek ax        # write PC
 .endm
 _JMPkr:
@@ -2308,7 +2372,7 @@ _JMPkr:
 
 # cond8 addr8 -- cond8 addr8
 _JCNkr:
-    rpeek_top_zx bx     # read addr8
+    rpeek_top_sx bx     # read addr8
     rindex rcx, cl, 1
     rpeek al, rcx       # read cond8
     
@@ -2415,21 +2479,26 @@ _SUBkr:
     binary_opkr sub
     next
 
-# a8 b8 -- a8 b8 result8
-.macro binary_rax_opkr, op
-    rpeek2_top bl, al, rcx, cl  # read b8 and a8
-    \op bl 
-    rpush al                    # write result8
-.endm
-
 # a8 b8 -- a8 b8 a8*b8
 _MULkr:
-    binary_rax_opkr mul
+    rpeek2_top bl, al, rcx, cl  # read b8 and a8
+    mul bl 
+    rpush al                    # write result8
     next
 
 # a8 b8 -- a8 b8 a8/b8
 _DIVkr:
-    binary_rax_opkr div
+    rpeek_top bl                # read b8
+    test bl, bl
+    jz ____DIVkr_by_zero
+    rindex rcx, cl, 1
+    rpeek al, rcx               # read a8
+    div bl 
+    jmp ____DIVkr_write_result
+____DIVkr_by_zero:
+    mov al, bl
+____DIVkr_write_result:
+    rpush al                    # write result8
     next
 
 # a8 b8 -- a8 b8 a8&b8
@@ -2546,9 +2615,9 @@ _OVR2kr:
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 .macro cmp_op2kr, op
-    rpeeks_top ax, rcx, cl, r13w    # read b0 and b1
+    rpeeks_top bx, rcx, cl, r13w    # read b0 and b1
     deczx rcx, cl
-    rpeeks bx, rcx, cl, r13w        # read a0 and a1
+    rpeeks ax, rcx, cl, r13w        # read a0 and a1
 
     cmp ax, bx
     \op al
@@ -2566,17 +2635,17 @@ _NEQ2kr:
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 _GTH2kr:
-    cmp_op2kr setg
+    cmp_op2kr seta
     next
 
 # a1 a0 b1 b0 -- a1 a0 b1 b0 bool8
 _LTH2kr:
-    cmp_op2kr setl
+    cmp_op2kr setb
     next
 
 # addr8_1 addr8_0 -- addr8_1 addr8_0
 .macro _jmp_2kr
-    rpeeks r9, rax, al, rbx
+    rpeeks_top r9, rax, al, rbx
 .endm
 _JMP2kr:
     _jmp_2kr
@@ -2585,6 +2654,7 @@ _JMP2kr:
 # cond8 addr8_1 addr8_0 -- cond8 addr8_1 addr8_0
 _JCN2kr:
     rpeeks_top rax, rcx, cl, rbx    # read addr8_0 and addr8_1
+    deczx rcx, cl
     rpeek bl, rcx                   # read cond8
 
     test bl, bl
@@ -2699,7 +2769,7 @@ _DEO2kr:
     deczx rcx, cl
     rpeeks ax, rcx, cl, r13w      # read a8_0 and a8_1
     \op ax, bx 
-    rpushs ax, al                 # write sum8_1 and sum8_0
+    rpushs ax, al, bl                 # write sum8_1 and sum8_0
 .endm
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 sum8_1 sum8_0
@@ -2712,23 +2782,31 @@ _SUB2kr:
     binary_op2kr sub
     next
 
-# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 result8_1 result8_0
-.macro binary_rax_op2kr, op 
+# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
+_MUL2kr:
     rpeeks_top bx, rcx, cl, r13w  # read b8_0 and b8_1
     deczx rcx, cl
     rpeeks ax, rcx, cl, r13w      # read a8_0 and a8_1
-    \op bx 
-    rpushs ax, al                 # write sum8_1 and sum8_0
-.endm
-
-# a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 prod8_1 prod8_0
-_MUL2kr:
-    binary_rax_op2kr mul
+    mul bx 
+    rpushs ax, al, bl                 # write sum8_1 and sum8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 quot8_1 quot8_0
 _DIV2kr:
-    binary_rax_op2kr div 
+    rpeeks_top bx, rcx, cl, r13w  # read b8_0 and b8_1
+    test bx, bx
+    jz ____DIV2kr_by_zero
+    deczx rcx, cl
+    rpeeks ax, rcx, cl, r13w      # read a8_0 and a8_1
+    mov r14, rdx
+    xor dx, dx
+    div bx 
+    mov rdx, r14
+    jmp ____DIV2kr_write_result
+____DIV2kr_by_zero:
+    mov ax, bx
+____DIV2kr_write_result:
+    rpushs ax, al, bl             # write sum8_1 and sum8_0
     next
 
 # a8_1 a8_0 b8_1 b8_0 -- a8_1 a8_0 b8_1 b8_0 and8_1 and8_0
@@ -2762,7 +2840,7 @@ _SFT2kr:
     shr cl, 4
     shl bx, cl
 
-    rpushs bx, bl   # write c8_1 and c8_0
+    rpushs bx, bl, al   # write c8_1 and c8_0
 
     next
 
